@@ -61,7 +61,7 @@ public class App {
                             cmd.execute(parts);
                         } catch (Exception e) {
                             System.out.println("Error executing command: " + e.getMessage());
-                            // Optional: Print stack trace for debugging
+                            // for debugging purposes...
                             // e.printStackTrace();
                         }
                     } else {
@@ -72,35 +72,65 @@ public class App {
             }
         } catch (Exception e) {
             System.out.println("Fatal error: " + e.getMessage());
-            // e.printStackTrace();  // for debugging purposes
         }
     }
 
     private static void registerCommands(CommandRegistry registry) {
-        // Navigation Commands
+        // ===== NAVIGATION COMMANDS =====
         registry.register("ls", new FileSystemCommands.ListCommand());
         registry.register("pwd", new FileSystemCommands.PwdCommand());
         registry.register("cd", new FileSystemCommands.CdCommand());
 
-        // File Manipulation Commands
+        // ===== FILE MANIPULATION COMMANDS =====
         registry.register("mkdir", new FileSystemCommands.MkdirCommand());
         registry.register("touch", new FileManipulationCommands.TouchCommand());
         registry.register("rm", new FileManipulationCommands.RmCommand());
         registry.register("cat", new FileManipulationCommands.CatCommand());
 
-        // Text Utilities Commands
+        // ===== TEXT UTILITIES COMMANDS =====
         registry.register("echo", new TextCommands.EchoCommand());
         registry.register("grep", new TextCommands.GrepCommand());
         registry.register("help", new TextCommands.HelpCommand());
 
-        // Advanced File Operations
+        // ===== ADVANCED FILE OPERATIONS =====
         registry.register("cp", new AdvancedFileCommands.CpCommand());
         registry.register("mv", new AdvancedFileCommands.MvCommand());
 
-        // System Information Commands
+        // ===== SYSTEM INFORMATION COMMANDS =====
         registry.register("history", new SystemCommands.HistoryCommand());
         registry.register("whoami", new SystemCommands.WhoamiCommand());
         registry.register("date", new SystemCommands.DateCommand());
         registry.register("clear", new SystemCommands.ClearCommand());
+
+        // ===== SEARCH COMMANDS =====
+        registry.register("find", new SearchCommands.FindCommand());
+        registry.register("wc", new SearchCommands.WcCommand());
+        registry.register("diff", new SearchCommands.DiffCommand());
+
+        // ===== COMPRESSION COMMANDS =====
+        registry.register("zip", new CompressionCommands.ZipCommand());
+        registry.register("unzip", new CompressionCommands.UnzipCommand());
+        registry.register("gzip", new CompressionCommands.GzipCommand());
+        registry.register("gunzip", new CompressionCommands.GunzipCommand());
+
+        // ===== NETWORK COMMANDS =====
+        registry.register("ping", new NetworkCommands.PingCommand());
+        registry.register("wget", new NetworkCommands.WgetCommand());
+        registry.register("curl", new NetworkCommands.CurlCommand());
+        registry.register("ifconfig", new NetworkCommands.IfconfigCommand());
+
+        // ===== PROCESS COMMANDS =====
+        registry.register("ps", new ProcessCommands.PsCommand());
+        registry.register("exec", new ProcessCommands.ExecCommand());
+        registry.register("env", new ProcessCommands.EnvCommand());
+        registry.register("uname", new ProcessCommands.UnameCommand());
+
+        // ===== UTILITY COMMANDS =====
+        registry.register("sort", new UtilityCommands.SortCommand());
+        registry.register("uniq", new UtilityCommands.UniqCommand());
+        registry.register("checksum", new UtilityCommands.ChecksumCommand());
+        registry.register("du", new UtilityCommands.DuCommand());
+        registry.register("head", new UtilityCommands.HeadCommand());
+        registry.register("tail", new UtilityCommands.TailCommand());
     }
 }
