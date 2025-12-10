@@ -1,25 +1,72 @@
 package com.devops;
 
 import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.List;
 
 public class TextCommands {
 
-    // --- 'echo' Command: Print text to console ---
+    // UPDATED 'echo' Command: Supports > and >> redirection ---
     public static class EchoCommand implements Command {
 
         @Override
+        @SuppressWarnings("ConvertToStringSwitch")
         public void execute(String[] args) {
+            StringBuilder output = new StringBuilder();
+            String targetFile = null;
+            boolean append = false;
+            boolean redirect = false;
+
             for (int i = 1; i < args.length; i++) {
-                System.out.print(args[i] + " ");
+                if (args[i].equals(">")) {
+                    redirect = true;
+                    append = false;
+                    if (i + 1 < args.length) {
+                        targetFile = args[i + 1];
+                    } else {
+                        System.out.println("Error: No filename specified after >");
+                        return;
+                    }
+                    break;
+                } else if (args[i].equals(">>")) {
+                    redirect = true;
+                    append = true;
+                    if (i + 1 < args.length) {
+                        targetFile = args[i + 1];
+                    } else {
+                        System.out.println("Error: No filename specified after >>");
+                        return;
+                    }
+                    break;
+                } else {
+                    if (output.length() > 0) {
+                        output.append(" ");
+                    }
+                    output.append(args[i]);
+                }
             }
-            System.out.println();
+
+            String textToWrite = output.toString();
+
+            if (redirect) {
+                if (targetFile != null) {
+                    File file = new File(App.currentDirectory, targetFile);
+                    try (FileWriter writer = new FileWriter(file, append)) {
+                        writer.write(textToWrite + System.lineSeparator());
+                        System.out.println((append ? "Appended to " : "Overwrote ") + targetFile);
+                    } catch (IOException e) {
+                        System.out.println("Error writing to file: " + e.getMessage());
+                    }
+                }
+            } else {
+                System.out.println(textToWrite);
+            }
         }
     }
 
-    // --- 'grep' Command: Search text in file ---
+    // --- 'grep' Command (Unchanged) ---
     public static class GrepCommand implements Command {
 
         @Override
@@ -51,15 +98,16 @@ public class TextCommands {
         }
     }
 
-    // --- 'help' Command ---
+    // --- 'help' Command (Unchanged) ---
     public static class HelpCommand implements Command {
 
         @Override
         public void execute(String[] args) {
             System.out.println("Available Commands:");
             System.out.println("  ls, pwd, cd, mkdir");
-            System.out.println("  touch, rm, cat");
-            System.out.println("  echo, grep, exit");
+            System.out.println("  touch, rm, cat, cp, mv");
+            System.out.println("  echo (supports > and >>), grep");
+            System.out.println("  history, whoami, date, clear, exit");
         }
     }
 }
