@@ -1,8 +1,8 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 
 echo ===================================================
-echo      J-Shell Quickstart & Environment Setup
+echo     J-Shell Quickstart & Environment Setup
 echo ===================================================
 echo.
 echo [1] Run inside Docker (Recommended for users)
@@ -21,17 +21,17 @@ if "%choice%"=="2" goto local_mode
 echo Invalid choice. Exiting.
 goto :eof
 
-:: MODE 1: DOCKER SETUP (Skips Java/Maven checks)
+:: MODE 1: DOCKER SETUP
 :docker_mode
 echo.
 echo [MODE] Switched to Docker Container Mode.
 
 :: --- CHECK DOCKER ---
 docker --version >nul 2>&1
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo [MISSING] Docker not found.
     set /p install_docker="Would you like to install Docker Desktop? (y/n): "
-    if /i "%install_docker%"=="y" (
+    if /i "!install_docker!"=="y" (
         echo Installing Docker Desktop...
         winget install -e --id Docker.DockerDesktop
         echo [IMPORTANT] Docker installation requires a system restart.
@@ -49,7 +49,7 @@ if %errorlevel% neq 0 (
 :: --- CHECK DAEMON ---
 echo Checking if Docker Engine is running...
 docker info >nul 2>&1
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo Docker Desktop is not running. Attempting to start...
     start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
     echo Waiting for Docker to start (this may take up to 60s)...
@@ -71,24 +71,21 @@ echo.
 echo Starting J-Shell Container...
 echo ---------------------------------------------------
 echo Note: You are now inside the Linux container.
-echo Files created here will disappear when you exit 
-echo (unless you mount a volume).
-echo ---------------------------------------------------
 docker run -it --rm --name jshell-instance jshell
 goto :end
 
 
-:: MODE 2: LOCAL SETUP (Checks for Java/Maven)
+:: MODE 2: LOCAL SETUP
 :local_mode
 echo.
 echo [MODE] Switched to Local Windows Mode.
 
 :: --- CHECK JAVA ---
 java -version >nul 2>&1
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo [MISSING] Java JDK not found.
     set /p install_java="Would you like to install Java JDK 21? (y/n): "
-    if /i "%install_java%"=="y" (
+    if /i "!install_java!"=="y" (
         echo Installing Eclipse Temurin JDK 21...
         winget install -e --id EclipseAdoptium.Temurin.21.JDK
         echo [NOTE] You may need to restart your terminal to refresh PATH.
@@ -98,11 +95,14 @@ if %errorlevel% neq 0 (
 )
 
 :: --- CHECK MAVEN ---
-mvn -version >nul 2>&1
-if %errorlevel% neq 0 (
+:: FIX 1: Added 'call' here so control returns to this script
+call mvn -version >nul 2>&1
+if !errorlevel! neq 0 (
     echo [MISSING] Maven not found.
     set /p install_mvn="Would you like to install Apache Maven? (y/n): "
-    if /i "%install_mvn%"=="y" (
+    
+    :: FIX 2: Using !variables! for delayed expansion
+    if /i "!install_mvn!"=="y" (
         echo Installing Apache Maven...
         winget install -e --id Apache.Maven
         echo [NOTE] You may need to restart your terminal to refresh PATH.
@@ -114,12 +114,13 @@ if %errorlevel% neq 0 (
 :: --- BUILD AND RUN ---
 echo.
 echo Building project locally...
+call cd jshell
 call mvn clean package -DskipTests
 
 echo.
 echo Starting J-Shell on Windows...
 echo ---------------------------------------------------
-java -jar target/j-shell-1.0-SNAPSHOT.jar
+java -jar target/j-shell-1.0.0.jar
 goto :end
 
 :end
