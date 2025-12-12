@@ -29,6 +29,7 @@ j-shell/
                     └── UtilityCommands.java
 .gitignore
 README.md
+quickStart.bat
 ```
 
 ##  Quick Start
@@ -46,8 +47,11 @@ docker run -it --rm jshell:latest
 ```
 
 **Run with mounted workspace:**
-```bash
-docker run -it --rm -v $(pwd)/workspace:/app/workspace jshell:latest
+```Cmd
+docker run -it --rm -v %cd%/workspace:/app/workspace jshell:latest
+```
+```PowerShell
+docker run -it --rm -v ${PWD}/workspace:/app/workspace jshell:latest
 ```
 
 ### Option 2: Using Docker Compose
