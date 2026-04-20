@@ -1,9 +1,11 @@
 package com.devops;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
-public class CommandRegistry {
+public final class CommandRegistry {
 
     private final Map<String, Command> commands = new HashMap<>();
 
@@ -11,7 +13,11 @@ public class CommandRegistry {
         commands.put(name, command);
     }
 
-    public Command getCommand(String name) {
-        return commands.get(name);
+    public Optional<Command> find(String name) {
+        return Optional.ofNullable(commands.get(name));
+    }
+
+    public Map<String, Command> all() {
+        return Collections.unmodifiableMap(commands);
     }
 }

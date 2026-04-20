@@ -4,121 +4,127 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
-public class CompressionCommands {
+public final class CompressionCommands {
 
-    // Create zip archive
-    public static class ZipCommand implements Command {
+    private static final int BUFFER_SIZE = 8192;
+
+    private CompressionCommands() {}
+
+    public static final class ZipCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
-            if (args.length < 3) {
-                System.out.println("usage: zip <output.zip> <file1> [file2] ...");
-                System.out.println("   or: zip -r <output.zip> <directory>");
-                return;
+        public int execute(ShellContext context, String[] args) {
+            boolean recursive = args.length > 1 && args[1].equals("-r");
+            int zipNameIdx  = recursive ? 2 : 1;
+            int firstFileIdx = recursive ? 3 : 2;
+
+            if (args.length < firstFileIdx + 1) {
+                System.err.println("usage: " + usage());
+                return 1;
             }
 
-            boolean recursive = args[1].equals("-r");
-            String zipName = recursive ? args[2] : args[1];
-            int startIndex = recursive ? 3 : 2;
+            String zipName = args[zipNameIdx].endsWith(".zip")
+                ? args[zipNameIdx] : args[zipNameIdx] + ".zip";
+            File zipFile = new File(context.currentDirectory(), zipName);
 
-            if (!zipName.endsWith(".zip")) {
-                zipName += ".zip";
-            }
-
-            try (ZipOutputStream zos = new ZipOutputStream(
-                    new FileOutputStream(new File(App.currentDirectory, zipName)))) {
-
-                for (int i = startIndex; i < args.length; i++) {
-                    File file = new File(App.currentDirectory, args[i]);
-                    if (file.exists()) {
-                        if (file.isDirectory() && recursive) {
-                            zipDirectory(file, file.getName(), zos);
-                        } else if (file.isFile()) {
-                            addToZip(file, file.getName(), zos);
-                            System.out.println("Added: " + args[i]);
-                        }
-                    } else {
-                        System.out.println("Warning: " + args[i] + " not found");
+            try (var zos = new ZipOutputStream(new FileOutputStream(zipFile))) {
+                for (int i = firstFileIdx; i < args.length; i++) {
+                    File file = new File(context.currentDirectory(), args[i]);
+                    if (!file.exists()) {
+                        System.err.println("zip: warning: '" + args[i] + "' not found");
+                        continue;
+                    }
+                    if (file.isDirectory() && recursive) {
+                        addDirectory(file, file.getName(), zos);
+                    } else if (file.isFile()) {
+                        addFile(file, file.getName(), zos);
                     }
                 }
                 System.out.println("Created: " + zipName);
             } catch (IOException e) {
-                System.out.println("Error creating zip: " + e.getMessage());
+                System.err.println("zip: " + e.getMessage());
+                return 1;
             }
+            return 0;
         }
 
-        private void addToZip(File file, String name, ZipOutputStream zos) throws IOException {
-            ZipEntry entry = new ZipEntry(name);
-            zos.putNextEntry(entry);
-
-            try (FileInputStream fis = new FileInputStream(file)) {
-                byte[] buffer = new byte[1024];
-                int len;
-                while ((len = fis.read(buffer)) > 0) {
-                    zos.write(buffer, 0, len);
-                }
-            }
+        private void addFile(File file, String entryName, ZipOutputStream zos) throws IOException {
+            zos.putNextEntry(new ZipEntry(entryName));
+            Files.copy(file.toPath(), zos);
             zos.closeEntry();
         }
 
-        private void zipDirectory(File directory, String baseName, ZipOutputStream zos)
-                throws IOException {
-            File[] files = directory.listFiles();
-            if (files != null) {
-                for (File file : files) {
-                    String entryName = baseName + "/" + file.getName();
-                    if (file.isDirectory()) {
-                        zipDirectory(file, entryName, zos);
-                    } else {
-                        addToZip(file, entryName, zos);
-                        System.out.println("Added: " + entryName);
-                    }
+        private void addDirectory(File dir, String base, ZipOutputStream zos) throws IOException {
+            File[] files = dir.listFiles();
+            if (files == null) return;
+            for (File file : files) {
+                String entryName = base + "/" + file.getName();
+                if (file.isDirectory()) {
+                    addDirectory(file, entryName, zos);
+                } else {
+                    addFile(file, entryName, zos);
                 }
             }
         }
+
+        @Override public String name()  { return "zip"; }
+        @Override public String usage() { return "zip [-r] <output.zip> <file...>"; }
     }
 
-    // Extract zip archive
-    public static class UnzipCommand implements Command {
+    public static final class UnzipCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             if (args.length < 2) {
-                System.out.println("usage: unzip <file.zip>");
-                System.out.println("   or: unzip <file.zip> <destination>");
-                return;
+                System.err.println("usage: " + usage());
+                return 1;
             }
 
-            String zipName = args[1];
+            File zipFile = new File(context.currentDirectory(), args[1]);
             File destDir = args.length > 2
-                    ? new File(App.currentDirectory, args[2]) : App.currentDirectory;
+                ? new File(context.currentDirectory(), args[2])
+                : context.currentDirectory();
 
-            File zipFile = new File(App.currentDirectory, zipName);
             if (!zipFile.exists()) {
-                System.out.println("unzip: " + zipName + ": No such file");
-                return;
+                System.err.println("unzip: '" + args[1] + "': No such file");
+                return 1;
             }
 
-            try (ZipInputStream zis = new ZipInputStream(new FileInputStream(zipFile))) {
+            String destCanonical;
+            try {
+                destCanonical = destDir.getCanonicalPath();
+            } catch (IOException e) {
+                System.err.println("unzip: " + e.getMessage());
+                return 1;
+            }
+
+            try (var zis = new ZipInputStream(new FileInputStream(zipFile))) {
                 ZipEntry entry;
-                byte[] buffer = new byte[1024];
+                byte[] buffer = new byte[BUFFER_SIZE];
 
                 while ((entry = zis.getNextEntry()) != null) {
-                    File newFile = new File(destDir, entry.getName());
+                    File target = new File(destDir, entry.getName());
+
+                    // Zip slip protection
+                    if (!target.getCanonicalPath().startsWith(destCanonical + File.separator)
+                            && !target.getCanonicalPath().equals(destCanonical)) {
+                        System.err.println("unzip: blocked unsafe entry: " + entry.getName());
+                        zis.closeEntry();
+                        continue;
+                    }
 
                     if (entry.isDirectory()) {
-                        newFile.mkdirs();
+                        target.mkdirs();
                     } else {
-                        // Create parent directories if needed
-                        new File(newFile.getParent()).mkdirs();
-
-                        try (FileOutputStream fos = new FileOutputStream(newFile)) {
+                        target.getParentFile().mkdirs();
+                        try (var fos = new FileOutputStream(target)) {
                             int len;
                             while ((len = zis.read(buffer)) > 0) {
                                 fos.write(buffer, 0, len);
@@ -128,93 +134,83 @@ public class CompressionCommands {
                     }
                     zis.closeEntry();
                 }
-                System.out.println("Extraction complete!");
+                System.out.println("Done.");
             } catch (IOException e) {
-                System.out.println("Error extracting zip: " + e.getMessage());
+                System.err.println("unzip: " + e.getMessage());
+                return 1;
             }
+            return 0;
         }
+
+        @Override public String name()  { return "unzip"; }
+        @Override public String usage() { return "unzip <file.zip> [destination]"; }
     }
 
-    // Compress file using gzip
-    public static class GzipCommand implements Command {
+    public static final class GzipCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             if (args.length < 2) {
-                System.out.println("usage: gzip <filename>");
-                return;
+                System.err.println("usage: " + usage());
+                return 1;
             }
-
-            String fileName = args[1];
-            File inputFile = new File(App.currentDirectory, fileName);
-
-            if (!inputFile.exists()) {
-                System.out.println("gzip: " + fileName + ": No such file");
-                return;
+            File input = new File(context.currentDirectory(), args[1]);
+            if (!input.exists()) {
+                System.err.println("gzip: '" + args[1] + "': No such file");
+                return 1;
             }
-
-            File outputFile = new File(App.currentDirectory, fileName + ".gz");
-
-            try (FileInputStream fis = new FileInputStream(inputFile); GZIPOutputStream gzos = new GZIPOutputStream(
-                    new FileOutputStream(outputFile))) {
-
-                byte[] buffer = new byte[1024];
+            File output = new File(context.currentDirectory(), args[1] + ".gz");
+            try (var fis = new FileInputStream(input);
+                 var gzos = new GZIPOutputStream(new FileOutputStream(output))) {
+                byte[] buffer = new byte[BUFFER_SIZE];
                 int len;
-                while ((len = fis.read(buffer)) > 0) {
-                    gzos.write(buffer, 0, len);
-                }
-
-                System.out.println("Compressed: " + fileName + " -> " + fileName + ".gz");
-
-                // Optionally delete original file
-                // inputFile.delete();
+                while ((len = fis.read(buffer)) > 0) gzos.write(buffer, 0, len);
+                System.out.println(args[1] + " -> " + output.getName());
             } catch (IOException e) {
-                System.out.println("Error compressing file: " + e.getMessage());
+                System.err.println("gzip: " + e.getMessage());
+                return 1;
             }
+            return 0;
         }
+
+        @Override public String name()  { return "gzip"; }
+        @Override public String usage() { return "gzip <file>"; }
     }
 
-    // Decompress gzip file
-    public static class GunzipCommand implements Command {
+    public static final class GunzipCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             if (args.length < 2) {
-                System.out.println("usage: gunzip <filename.gz>");
-                return;
+                System.err.println("usage: " + usage());
+                return 1;
             }
-
             String fileName = args[1];
-            File inputFile = new File(App.currentDirectory, fileName);
-
-            if (!inputFile.exists()) {
-                System.out.println("gunzip: " + fileName + ": No such file");
-                return;
-            }
-
             if (!fileName.endsWith(".gz")) {
-                System.out.println("gunzip: " + fileName + ": unknown suffix");
-                return;
+                System.err.println("gunzip: '" + fileName + "': unknown suffix");
+                return 1;
             }
-
-            String outputFileName = fileName.substring(0, fileName.length() - 3);
-            File outputFile = new File(App.currentDirectory, outputFileName);
-
-            try (GZIPInputStream gzis = new GZIPInputStream(new FileInputStream(inputFile)); FileOutputStream fos = new FileOutputStream(outputFile)) {
-
-                byte[] buffer = new byte[1024];
+            File input = new File(context.currentDirectory(), fileName);
+            if (!input.exists()) {
+                System.err.println("gunzip: '" + fileName + "': No such file");
+                return 1;
+            }
+            String outputName = fileName.substring(0, fileName.length() - 3);
+            File output = new File(context.currentDirectory(), outputName);
+            try (var gzis = new GZIPInputStream(new FileInputStream(input));
+                 var fos = new FileOutputStream(output)) {
+                byte[] buffer = new byte[BUFFER_SIZE];
                 int len;
-                while ((len = gzis.read(buffer)) > 0) {
-                    fos.write(buffer, 0, len);
-                }
-
-                System.out.println("Decompressed: " + fileName + " -> " + outputFileName);
-
-                // Optionally delete compressed file
-                // inputFile.delete();
+                while ((len = gzis.read(buffer)) > 0) fos.write(buffer, 0, len);
+                System.out.println(fileName + " -> " + outputName);
             } catch (IOException e) {
-                System.out.println("Error decompressing file: " + e.getMessage());
+                System.err.println("gunzip: " + e.getMessage());
+                return 1;
             }
+            return 0;
         }
+
+        @Override public String name()  { return "gunzip"; }
+        @Override public String usage() { return "gunzip <file.gz>"; }
     }
 }

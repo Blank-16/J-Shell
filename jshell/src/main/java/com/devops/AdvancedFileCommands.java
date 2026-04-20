@@ -5,127 +5,99 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 
-public class AdvancedFileCommands {
+public final class AdvancedFileCommands {
 
-    // --- 'cp' Command: Copy file ---
-    public static class CpCommand implements Command {
+    private AdvancedFileCommands() {}
+
+    public static final class CpCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
-            boolean recursive = false;
-            int sourceIndex = 1;
-            int destIndex = 2;
+        public int execute(ShellContext context, String[] args) {
+            boolean recursive = args.length > 1 && args[1].equals("-r");
+            int srcIdx  = recursive ? 2 : 1;
+            int destIdx = recursive ? 3 : 2;
 
-            if (args.length > 1 && args[1].equals("-r")) {
-                recursive = true;
-                sourceIndex = 2;
-                destIndex = 3;
-                if (args.length < 4) {
-                    System.out.println("usage: cp -r <source> <destination>");
-                    return;
-                }
-            } else if (args.length < 3) {
-                System.out.println("usage: cp <source> <destination>");
-                return;
+            if (args.length < destIdx + 1) {
+                System.err.println("usage: " + usage());
+                return 1;
             }
 
-            File source = new File(App.currentDirectory, args[sourceIndex]);
-            File dest = new File(App.currentDirectory, args[destIndex]);
+            File source = new File(context.currentDirectory(), args[srcIdx]);
+            File dest   = new File(context.currentDirectory(), args[destIdx]);
 
             if (!source.exists()) {
-                System.out.println("cp: cannot stat '" + args[sourceIndex] + "': No such file or directory");
-                return;
+                System.err.println("cp: '" + args[srcIdx] + "': No such file or directory");
+                return 1;
             }
-
             if (source.isDirectory() && !recursive) {
-                System.out.println("cp: " + args[sourceIndex] + " is a directory (use -r to copy)");
-                return;
-            }
-
-            if (source.isDirectory() && recursive) {
-                try {
-                    copyDirectory(source, dest);
-                    System.out.println("Copied directory '" + args[sourceIndex] + "' to '" + dest.getName() + "'");
-                } catch (IOException e) {
-                    System.out.println("cp: error copying directory: " + e.getMessage());
-                }
-                return;
+                System.err.println("cp: '" + args[srcIdx] + "' is a directory (use -r)");
+                return 1;
             }
 
             try {
-                if (dest.isDirectory()) {
-                    dest = new File(dest, source.getName());
+                if (source.isDirectory()) {
+                    copyDirectory(source, dest.isDirectory() ? new File(dest, source.getName()) : dest);
+                } else {
+                    File finalDest = dest.isDirectory() ? new File(dest, source.getName()) : dest;
+                    Files.copy(source.toPath(), finalDest.toPath(), StandardCopyOption.REPLACE_EXISTING);
                 }
-
-                if (dest.exists()) {
-                    System.out.println("Warning: Overwriting " + dest.getName());
-                }
-
-                Files.copy(source.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                System.out.println("Copied '" + args[sourceIndex] + "' to '" + dest.getName() + "'");
-
             } catch (IOException e) {
-                System.out.println("cp: error copying file: " + e.getMessage());
+                System.err.println("cp: " + e.getMessage());
+                return 1;
             }
+            return 0;
         }
 
-        private void copyDirectory(File source, File dest) throws IOException {
-            if (!dest.exists()) {
-                dest.mkdirs();
-            }
-
-            File[] files = source.listFiles();
-            if (files != null) {
-                for (File file : files) {
-                    File destFile = new File(dest, file.getName());
-                    if (file.isDirectory()) {
-                        copyDirectory(file, destFile);
-                    } else {
-                        Files.copy(file.toPath(), destFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                    }
+        private void copyDirectory(File src, File dest) throws IOException {
+            dest.mkdirs();
+            File[] files = src.listFiles();
+            if (files == null) return;
+            for (File file : files) {
+                File destChild = new File(dest, file.getName());
+                if (file.isDirectory()) {
+                    copyDirectory(file, destChild);
+                } else {
+                    Files.copy(file.toPath(), destChild.toPath(), StandardCopyOption.REPLACE_EXISTING);
                 }
             }
         }
+
+        @Override public String name()  { return "cp"; }
+        @Override public String usage() { return "cp [-r] <source> <destination>"; }
     }
 
-    // --- 'mv' Command: Move or Rename file ---
-    public static class MvCommand implements Command {
+    public static final class MvCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             if (args.length < 3) {
-                System.out.println("usage: mv <source> <destination>");
-                return;
+                System.err.println("usage: " + usage());
+                return 1;
             }
 
-            File source = new File(App.currentDirectory, args[1]);
-            File dest = new File(App.currentDirectory, args[2]);
+            File source = new File(context.currentDirectory(), args[1]);
+            File dest   = new File(context.currentDirectory(), args[2]);
 
             if (!source.exists()) {
-                System.out.println("mv: cannot stat '" + args[1] + "': No such file or directory");
-                return;
+                System.err.println("mv: '" + args[1] + "': No such file or directory");
+                return 1;
             }
 
             try {
-                if (dest.isDirectory()) {
-                    dest = new File(dest, source.getName());
+                File finalDest = dest.isDirectory() ? new File(dest, source.getName()) : dest;
+                if (source.getCanonicalPath().equals(finalDest.getCanonicalPath())) {
+                    System.err.println("mv: '" + args[1] + "' and '" + args[2] + "' are the same file");
+                    return 1;
                 }
-
-                if (source.getCanonicalPath().equals(dest.getCanonicalPath())) {
-                    System.out.println("mv: '" + args[1] + "' and '" + args[2] + "' are the same file");
-                    return;
-                }
-
-                if (dest.exists()) {
-                    System.out.println("Warning: Overwriting " + dest.getName());
-                }
-
-                Files.move(source.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                System.out.println("Moved '" + args[1] + "' to '" + dest.getName() + "'");
-
+                Files.move(source.toPath(), finalDest.toPath(), StandardCopyOption.REPLACE_EXISTING);
             } catch (IOException e) {
-                System.out.println("mv: error moving file: " + e.getMessage());
+                System.err.println("mv: " + e.getMessage());
+                return 1;
             }
+            return 0;
         }
+
+        @Override public String name()  { return "mv"; }
+        @Override public String usage() { return "mv <source> <destination>"; }
     }
 }
