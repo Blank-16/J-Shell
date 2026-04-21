@@ -1,79 +1,115 @@
 package com.devops;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.util.List;
 
-public class FileManipulationCommands {
+public final class FileManipulationCommands {
 
-    // --- 'touch' Command: Create empty file ---
-    public static class TouchCommand implements Command {
+    private FileManipulationCommands() {}
+
+    public static final class TouchCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             if (args.length < 2) {
-                System.out.println("usage: touch <filename>");
-                return;
+                System.err.println("usage: " + usage());
+                return 1;
             }
-            File file = new File(App.currentDirectory, args[1]);
+            File file = new File(context.currentDirectory(), args[1]);
             try {
-                if (file.createNewFile()) {
-                    System.out.println("File created: " + file.getName());
-                } else {
+                if (!file.createNewFile()) {
                     file.setLastModified(System.currentTimeMillis());
                 }
             } catch (IOException e) {
-                System.out.println("Error creating file: " + e.getMessage());
+                System.err.println("touch: " + e.getMessage());
+                return 1;
             }
+            return 0;
         }
+
+        @Override public String name()  { return "touch"; }
+        @Override public String usage() { return "touch <file>"; }
     }
 
-    // --- 'rm' Command: Remove file ---
-    public static class RmCommand implements Command {
+    public static final class RmCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             if (args.length < 2) {
-                System.out.println("usage: rm <filename>");
-                return;
+                System.err.println("usage: " + usage());
+                return 1;
             }
-            File file = new File(App.currentDirectory, args[1]);
-            if (file.exists()) {
-                if (file.delete()) {
-                    System.out.println("Removed " + args[1]);
-                } else {
-                    System.out.println("Error: Could not delete " + args[1]);
-                }
-            } else {
-                System.out.println("rm: cannot remove '" + args[1] + "': No such file");
-            }
-        }
-    }
+            boolean recursive = args[1].equals("-r") || args[1].equals("-rf");
+            String target = recursive ? (args.length > 2 ? args[2] : null) : args[1];
 
-    // --- 'cat' Command: Concatenate/View file ---
-    public static class CatCommand implements Command {
-
-        @Override
-        public void execute(String[] args) {
-            if (args.length < 2) {
-                System.out.println("usage: cat <filename>");
-                return;
+            if (target == null) {
+                System.err.println("usage: " + usage());
+                return 1;
             }
-            File file = new File(App.currentDirectory, args[1]);
+
+            File file = new File(context.currentDirectory(), target);
             if (!file.exists()) {
-                System.out.println("cat: " + args[1] + ": No such file");
-                return;
+                System.err.println("rm: cannot remove '" + target + "': No such file or directory");
+                return 1;
             }
-            try {
-                // Java NIO for easy reading
-                List<String> lines = Files.readAllLines(file.toPath());
-                for (String line : lines) {
+
+            if (file.isDirectory() && !recursive) {
+                System.err.println("rm: '" + target + "' is a directory (use -r)");
+                return 1;
+            }
+
+            if (!deleteRecursive(file)) {
+                System.err.println("rm: failed to remove '" + target + "'");
+                return 1;
+            }
+            return 0;
+        }
+
+        private boolean deleteRecursive(File file) {
+            if (file.isDirectory()) {
+                File[] children = file.listFiles();
+                if (children != null) {
+                    for (File child : children) {
+                        if (!deleteRecursive(child)) return false;
+                    }
+                }
+            }
+            return file.delete();
+        }
+
+        @Override public String name()  { return "rm"; }
+        @Override public String usage() { return "rm [-r] <file|directory>"; }
+    }
+
+    public static final class CatCommand implements Command {
+
+        @Override
+        public int execute(ShellContext context, String[] args) {
+            if (args.length < 2) {
+                System.err.println("usage: " + usage());
+                return 1;
+            }
+            File file = new File(context.currentDirectory(), args[1]);
+            if (!file.exists()) {
+                System.err.println("cat: " + args[1] + ": No such file");
+                return 1;
+            }
+            // Stream line by line — avoids loading large files into memory
+            try (BufferedReader reader = Files.newBufferedReader(file.toPath())) {
+                String line;
+                while ((line = reader.readLine()) != null) {
                     System.out.println(line);
                 }
             } catch (IOException e) {
-                System.out.println("Error reading file: " + e.getMessage());
+                System.err.println("cat: " + e.getMessage());
+                return 1;
             }
+            return 0;
         }
+
+        @Override public String name()  { return "cat"; }
+        @Override public String usage() { return "cat <file>"; }
     }
 }

@@ -1,175 +1,176 @@
 package com.devops;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
-public class SearchCommands {
+public final class SearchCommands {
 
-    // Find files by name pattern
-    public static class FindCommand implements Command {
+    private SearchCommands() {}
+
+    public static final class FindCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             if (args.length < 2) {
-                System.out.println("usage: find <pattern> [-r for recursive]");
-                System.out.println("   or: find <directory> -name <pattern>");
-                return;
+                System.err.println("usage: " + usage());
+                return 1;
             }
 
-            boolean recursive = false;
+            // Argument parsing: find <pattern> [-r] OR find <dir> -name <pattern>
+            File startDir = context.currentDirectory();
             String pattern;
-            File startDir = App.currentDirectory;
+            boolean recursive = false;
 
-            // Check different argument patterns
-            if (args.length == 2) {
-                pattern = args[1];
-            } else if (args.length == 3 && args[2].equals("-r")) {
-                pattern = args[1];
+            if (args.length >= 4 && args[2].equals("-name")) {
+                startDir  = new File(context.currentDirectory(), args[1]);
+                pattern   = args[3];
                 recursive = true;
-            } else if (args.length >= 4 && args[2].equals("-name")) {
-                startDir = new File(App.currentDirectory, args[1]);
-                pattern = args[3];
+            } else if (args.length == 3 && args[2].equals("-r")) {
+                pattern   = args[1];
                 recursive = true;
             } else {
                 pattern = args[1];
             }
 
-            if (!startDir.exists() || !startDir.isDirectory()) {
-                System.out.println("find: '" + args[1] + "': No such directory");
-                return;
+            if (!startDir.isDirectory()) {
+                System.err.println("find: '" + startDir.getName() + "': No such directory");
+                return 1;
             }
 
-            System.out.println("Searching for: " + pattern);
-            int count = findFiles(startDir, pattern, recursive, 0);
-            System.out.println("\nFound " + count + " match(es)");
+            var count = new AtomicInteger(0);
+            findFiles(startDir, pattern, recursive, count);
+            System.out.println(count.get() + " match(es) found.");
+            return 0;
         }
 
-        private int findFiles(File directory, String pattern, boolean recursive, int count) {
-            File[] files = directory.listFiles();
-            if (files != null) {
-                for (File file : files) {
-                    if (file.getName().contains(pattern)) {
-                        System.out.println(file.getAbsolutePath());
-                        count++;
-                    }
-                    if (file.isDirectory() && recursive) {
-                        count = findFiles(file, pattern, recursive, count);
-                    }
+        private void findFiles(File dir, String pattern, boolean recursive, AtomicInteger count) {
+            File[] files = dir.listFiles();
+            if (files == null) return;
+            for (File file : files) {
+                if (file.getName().contains(pattern)) {
+                    System.out.println(file.getAbsolutePath());
+                    count.incrementAndGet();
+                }
+                if (file.isDirectory() && recursive) {
+                    findFiles(file, pattern, true, count);
                 }
             }
-            return count;
         }
+
+        @Override public String name()  { return "find"; }
+        @Override public String usage() { return "find <pattern> [-r] | find <dir> -name <pattern>"; }
     }
 
-    // Word count command - counts lines, words, and characters
-    public static class WcCommand implements Command {
+    public static final class WcCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             if (args.length < 2) {
-                System.out.println("usage: wc <filename>");
-                System.out.println("       wc -l <filename>  (lines only)");
-                System.out.println("       wc -w <filename>  (words only)");
-                return;
+                System.err.println("usage: " + usage());
+                return 1;
             }
 
             boolean linesOnly = false;
             boolean wordsOnly = false;
-            String fileName;
+            boolean charsOnly = false;
 
-            if (args[1].equals("-l")) {
-                linesOnly = true;
-                fileName = args[2];
-            } else if (args[1].equals("-w")) {
-                wordsOnly = true;
-                fileName = args[2];
-            } else {
-                fileName = args[1];
+            int fileArgIndex = 1;
+            if (args[1].equals("-l")) { linesOnly = true; fileArgIndex = 2; }
+            else if (args[1].equals("-w")) { wordsOnly = true; fileArgIndex = 2; }
+            else if (args[1].equals("-c")) { charsOnly = true; fileArgIndex = 2; }
+
+            if (fileArgIndex >= args.length) {
+                System.err.println("usage: " + usage());
+                return 1;
             }
 
-            File file = new File(App.currentDirectory, fileName);
+            String fileName = args[fileArgIndex];
+            File file = new File(context.currentDirectory(), fileName);
             if (!file.exists()) {
-                System.out.println("wc: " + fileName + ": No such file");
-                return;
+                System.err.println("wc: " + fileName + ": No such file");
+                return 1;
             }
 
-            try {
-                List<String> lines = Files.readAllLines(file.toPath());
-                long lineCount = lines.size();
-                long wordCount = lines.stream()
-                        .mapToLong(line -> line.trim().isEmpty() ? 0 : line.split("\\s+").length)
-                        .sum();
-                long charCount = lines.stream()
-                        .mapToLong(String::length)
-                        .sum();
-
-                if (linesOnly) {
-                    System.out.printf("%7d %s%n", lineCount, fileName);
-                } else if (wordsOnly) {
-                    System.out.printf("%7d %s%n", wordCount, fileName);
-                } else {
-                    System.out.printf("%7d %7d %7d %s%n", lineCount, wordCount, charCount, fileName);
+            long lines = 0, words = 0, chars = 0;
+            try (BufferedReader reader = Files.newBufferedReader(file.toPath())) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    lines++;
+                    chars += line.length();
+                    if (!line.isBlank()) {
+                        words += line.trim().split("\\s+").length;
+                    }
                 }
             } catch (IOException e) {
-                System.out.println("Error reading file: " + e.getMessage());
+                System.err.println("wc: " + e.getMessage());
+                return 1;
             }
+
+            if (linesOnly)      System.out.printf("%7d %s%n", lines, fileName);
+            else if (wordsOnly) System.out.printf("%7d %s%n", words, fileName);
+            else if (charsOnly) System.out.printf("%7d %s%n", chars, fileName);
+            else                System.out.printf("%7d %7d %7d %s%n", lines, words, chars, fileName);
+
+            return 0;
         }
+
+        @Override public String name()  { return "wc"; }
+        @Override public String usage() { return "wc [-l|-w|-c] <file>"; }
     }
 
-    // Diff command - compare two files
-    public static class DiffCommand implements Command {
+    public static final class DiffCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             if (args.length < 3) {
-                System.out.println("usage: diff <file1> <file2>");
-                return;
+                System.err.println("usage: " + usage());
+                return 1;
             }
 
-            File file1 = new File(App.currentDirectory, args[1]);
-            File file2 = new File(App.currentDirectory, args[2]);
+            File file1 = new File(context.currentDirectory(), args[1]);
+            File file2 = new File(context.currentDirectory(), args[2]);
 
-            if (!file1.exists()) {
-                System.out.println("diff: " + args[1] + ": No such file");
-                return;
-            }
-            if (!file2.exists()) {
-                System.out.println("diff: " + args[2] + ": No such file");
-                return;
-            }
+            if (!file1.exists()) { System.err.println("diff: '" + args[1] + "': No such file"); return 1; }
+            if (!file2.exists()) { System.err.println("diff: '" + args[2] + "': No such file"); return 1; }
 
             try {
                 List<String> lines1 = Files.readAllLines(file1.toPath());
                 List<String> lines2 = Files.readAllLines(file2.toPath());
 
+                // Myers-style output: mark each differing line position
                 boolean identical = true;
-                int maxLines = Math.max(lines1.size(), lines2.size());
+                int max = Math.max(lines1.size(), lines2.size());
+                for (int i = 0; i < max; i++) {
+                    String l1 = i < lines1.size() ? lines1.get(i) : null;
+                    String l2 = i < lines2.size() ? lines2.get(i) : null;
 
-                for (int i = 0; i < maxLines; i++) {
-                    String line1 = i < lines1.size() ? lines1.get(i) : null;
-                    String line2 = i < lines2.size() ? lines2.get(i) : null;
-
-                    if (line1 == null) {
-                        System.out.println("> " + (i + 1) + ": " + line2);
+                    if (l1 == null) {
+                        System.out.printf("> %d: %s%n", i + 1, l2);
                         identical = false;
-                    } else if (line2 == null) {
-                        System.out.println("< " + (i + 1) + ": " + line1);
+                    } else if (l2 == null) {
+                        System.out.printf("< %d: %s%n", i + 1, l1);
                         identical = false;
-                    } else if (!line1.equals(line2)) {
-                        System.out.println("< " + (i + 1) + ": " + line1);
-                        System.out.println("> " + (i + 1) + ": " + line2);
+                    } else if (!l1.equals(l2)) {
+                        System.out.printf("< %d: %s%n", i + 1, l1);
+                        System.out.printf("> %d: %s%n", i + 1, l2);
                         identical = false;
                     }
                 }
 
-                if (identical) {
-                    System.out.println("Files are identical");
-                }
+                if (identical) System.out.println("Files are identical.");
+                return identical ? 0 : 1;
             } catch (IOException e) {
-                System.out.println("Error comparing files: " + e.getMessage());
+                System.err.println("diff: " + e.getMessage());
+                return 1;
             }
         }
+
+        @Override public String name()  { return "diff"; }
+        @Override public String usage() { return "diff <file1> <file2>"; }
     }
 }

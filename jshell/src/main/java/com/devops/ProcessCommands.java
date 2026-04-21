@@ -5,198 +5,146 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
-import java.lang.management.MemoryUsage;
 import java.lang.management.RuntimeMXBean;
-import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
-public class ProcessCommands {
+public final class ProcessCommands {
 
-    // Show system processes
-    public static class PsCommand implements Command {
+    private ProcessCommands() {}
+
+    public static final class PsCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
-            System.out.println("Java Process Information:");
-            System.out.println("========================");
+        public int execute(ShellContext context, String[] args) {
+            boolean verbose = args.length > 1 && args[1].equals("-v");
 
-            RuntimeMXBean runtimeBean = ManagementFactory.getRuntimeMXBean();
-            System.out.println("Process ID: " + runtimeBean.getPid());
-            System.out.println("Uptime: " + formatUptime(runtimeBean.getUptime()));
-            System.out.println("Start Time: " + new Date(runtimeBean.getStartTime()));
+            RuntimeMXBean runtime = ManagementFactory.getRuntimeMXBean();
+            MemoryMXBean  memory  = ManagementFactory.getMemoryMXBean();
+            ThreadMXBean  threads = ManagementFactory.getThreadMXBean();
 
-            MemoryMXBean memoryBean = ManagementFactory.getMemoryMXBean();
-            MemoryUsage heapUsage = memoryBean.getHeapMemoryUsage();
+            System.out.println("PID:      " + runtime.getPid());
+            System.out.println("Uptime:   " + formatUptime(runtime.getUptime()));
+            System.out.println("Started:  " + Instant.ofEpochMilli(runtime.getStartTime()));
 
-            System.out.println("\nMemory Usage:");
-            System.out.println("  Heap Used: " + formatBytes(heapUsage.getUsed()));
-            System.out.println("  Heap Max: " + formatBytes(heapUsage.getMax()));
+            var heap = memory.getHeapMemoryUsage();
+            System.out.printf("Heap:     %s / %s%n",
+                ByteFormatter.format(heap.getUsed()),
+                ByteFormatter.format(heap.getMax()));
+            System.out.println("Threads:  " + threads.getThreadCount());
 
-            ThreadMXBean threadBean = ManagementFactory.getThreadMXBean();
-            System.out.println("\nThread Count: " + threadBean.getThreadCount());
-
-            // Show all Java threads
-            if (args.length > 1 && args[1].equals("-v")) {
-                System.out.println("\nActive Threads:");
-                long[] threadIds = threadBean.getAllThreadIds();
-                for (long id : threadIds) {
-                    ThreadInfo info = threadBean.getThreadInfo(id);
+            if (verbose) {
+                System.out.println();
+                System.out.println("Active threads:");
+                for (long id : threads.getAllThreadIds()) {
+                    var info = threads.getThreadInfo(id);
                     if (info != null) {
-                        System.out.println("  [" + id + "] " + info.getThreadName()
-                                + " - " + info.getThreadState());
+                        System.out.printf("  [%d] %-30s %s%n", id, info.getThreadName(), info.getThreadState());
                     }
                 }
             }
+            return 0;
         }
 
-        private String formatUptime(long milliseconds) {
-            long seconds = milliseconds / 1000;
-            long minutes = seconds / 60;
-            long hours = minutes / 60;
-            long days = hours / 24;
-
-            if (days > 0) {
-                return days + "d " + (hours % 24) + "h " + (minutes % 60) + "m";
-            } else if (hours > 0) {
-                return hours + "h " + (minutes % 60) + "m " + (seconds % 60) + "s";
-            } else if (minutes > 0) {
-                return minutes + "m " + (seconds % 60) + "s";
-            } else {
-                return seconds + "s";
-            }
+        private String formatUptime(long ms) {
+            long s = ms / 1000, m = s / 60, h = m / 60, d = h / 24;
+            if (d > 0) return d + "d " + (h % 24) + "h " + (m % 60) + "m";
+            if (h > 0) return h + "h " + (m % 60) + "m " + (s % 60) + "s";
+            if (m > 0) return m + "m " + (s % 60) + "s";
+            return s + "s";
         }
 
-        private String formatBytes(long bytes) {
-            if (bytes < 1024) {
-                return bytes + " B";
-            }
-            if (bytes < 1024 * 1024) {
-                return String.format("%.2f KB", bytes / 1024.0);
-            }
-            if (bytes < 1024 * 1024 * 1024) {
-                return String.format("%.2f MB", bytes / (1024.0 * 1024.0));
-            }
-            return String.format("%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0));
-        }
+        @Override public String name()  { return "ps"; }
+        @Override public String usage() { return "ps [-v]"; }
     }
 
-    // Execute system command
-    public static class ExecCommand implements Command {
+    public static final class ExecCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             if (args.length < 2) {
-                System.out.println("usage: exec <system-command> [arguments]");
-                System.out.println("Example: exec notepad.exe");
-                return;
+                System.err.println("usage: " + usage());
+                return 1;
             }
 
             String[] command = new String[args.length - 1];
-            System.arraycopy(args, 1, command, 0, args.length - 1);
+            System.arraycopy(args, 1, command, 0, command.length);
 
             try {
-                ProcessBuilder pb = new ProcessBuilder(command);
-                pb.directory(App.currentDirectory);
+                var pb = new ProcessBuilder(command);
+                pb.directory(context.currentDirectory());
                 pb.redirectErrorStream(true);
-
-                System.out.println("Executing: " + String.join(" ", command));
 
                 Process process = pb.start();
 
-                // Read output
-                try (BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(process.getInputStream()))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        System.out.println(line);
-                    }
+                try (var reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                    reader.lines().forEach(System.out::println);
                 }
 
                 int exitCode = process.waitFor();
-                System.out.println("\nProcess exited with code: " + exitCode);
+                if (exitCode != 0) System.err.println("exited with code " + exitCode);
+                return exitCode;
 
             } catch (IOException e) {
-                System.out.println("Error executing command: " + e.getMessage());
+                System.err.println("exec: " + e.getMessage());
+                return 1;
             } catch (InterruptedException e) {
-                System.out.println("Command interrupted");
                 Thread.currentThread().interrupt();
+                System.err.println("exec: interrupted");
+                return 1;
             }
         }
+
+        @Override public String name()  { return "exec"; }
+        @Override public String usage() { return "exec <command> [args...]"; }
     }
 
-    // Show environment variables
-    public static class EnvCommand implements Command {
+    public static final class EnvCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             Map<String, String> env = System.getenv();
 
             if (args.length > 1) {
-                // Show specific variable
-                String varName = args[1];
-                String value = env.get(varName);
-                if (value != null) {
-                    System.out.println(varName + "=" + value);
-                } else {
-                    System.out.println("Variable not found: " + varName);
+                String value = env.get(args[1]);
+                if (value == null) {
+                    System.err.println("env: '" + args[1] + "': not set");
+                    return 1;
                 }
+                System.out.println(args[1] + "=" + value);
             } else {
-                // Show all variables
-                System.out.println("Environment Variables:");
-                System.out.println("=====================");
-
-                List<String> sortedKeys = new ArrayList<>(env.keySet());
-                Collections.sort(sortedKeys);
-
-                for (String key : sortedKeys) {
-                    System.out.println(key + "=" + env.get(key));
-                }
+                List<String> keys = new ArrayList<>(env.keySet());
+                Collections.sort(keys);
+                keys.forEach(k -> System.out.println(k + "=" + env.get(k)));
             }
+            return 0;
         }
+
+        @Override public String name()  { return "env"; }
+        @Override public String usage() { return "env [variable]"; }
     }
 
-    // System information
-    public static class UnameCommand implements Command {
+    public static final class UnameCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
-            System.out.println("System Information:");
-            System.out.println("==================");
-
-            System.out.println("OS Name: " + System.getProperty("os.name"));
-            System.out.println("OS Version: " + System.getProperty("os.version"));
-            System.out.println("OS Architecture: " + System.getProperty("os.arch"));
-            System.out.println("Java Version: " + System.getProperty("java.version"));
-            System.out.println("Java Vendor: " + System.getProperty("java.vendor"));
-            System.out.println("Java Home: " + System.getProperty("java.home"));
-            System.out.println("User Name: " + System.getProperty("user.name"));
-            System.out.println("User Home: " + System.getProperty("user.home"));
-            System.out.println("Current Directory: " + System.getProperty("user.dir"));
-
-            Runtime runtime = Runtime.getRuntime();
-            System.out.println("\nRuntime Information:");
-            System.out.println("Available Processors: " + runtime.availableProcessors());
-            System.out.println("Free Memory: " + formatBytes(runtime.freeMemory()));
-            System.out.println("Total Memory: " + formatBytes(runtime.totalMemory()));
-            System.out.println("Max Memory: " + formatBytes(runtime.maxMemory()));
+        public int execute(ShellContext context, String[] args) {
+            Runtime rt = Runtime.getRuntime();
+            System.out.printf("%-20s %s%n", "OS:",       System.getProperty("os.name"));
+            System.out.printf("%-20s %s%n", "Version:",  System.getProperty("os.version"));
+            System.out.printf("%-20s %s%n", "Arch:",     System.getProperty("os.arch"));
+            System.out.printf("%-20s %s%n", "Java:",     System.getProperty("java.version"));
+            System.out.printf("%-20s %s%n", "User:",     System.getProperty("user.name"));
+            System.out.printf("%-20s %d%n", "CPUs:",     rt.availableProcessors());
+            System.out.printf("%-20s %s%n", "Free mem:", ByteFormatter.format(rt.freeMemory()));
+            System.out.printf("%-20s %s%n", "Max mem:",  ByteFormatter.format(rt.maxMemory()));
+            return 0;
         }
 
-        private String formatBytes(long bytes) {
-            if (bytes < 1024) {
-                return bytes + " B";
-            }
-            if (bytes < 1024 * 1024) {
-                return String.format("%.2f KB", bytes / 1024.0);
-            }
-            if (bytes < 1024 * 1024 * 1024) {
-                return String.format("%.2f MB", bytes / (1024.0 * 1024.0));
-            }
-            return String.format("%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0));
-        }
+        @Override public String name()  { return "uname"; }
+        @Override public String usage() { return "uname"; }
     }
 }
