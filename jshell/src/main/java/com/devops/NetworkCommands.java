@@ -9,235 +9,238 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
-import java.net.MalformedURLException;
 import java.net.NetworkInterface;
-import java.net.URL;
+import java.net.URI;
 import java.net.UnknownHostException;
+import java.util.Enumeration;
 
-public class NetworkCommands {
+public final class NetworkCommands {
 
-    // Ping a host
-    public static class PingCommand implements Command {
+    private static final int CONNECT_TIMEOUT_MS = 10_000;
+    private static final int READ_TIMEOUT_MS    = 10_000;
+    private static final int BUFFER_SIZE        = 8192;
+
+    private NetworkCommands() {}
+
+    public static final class PingCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             if (args.length < 2) {
-                System.out.println("usage: ping <host>");
-                System.out.println("   or: ping <host> <count>");
-                return;
+                System.err.println("usage: " + usage());
+                return 1;
             }
 
             String host = args[1];
-            int count = args.length > 2 ? Integer.parseInt(args[2]) : 4;
+            int count;
+            try {
+                count = args.length > 2 ? Integer.parseInt(args[2]) : 4;
+                if (count <= 0) throw new NumberFormatException();
+            } catch (NumberFormatException e) {
+                System.err.println("ping: invalid count '" + args[2] + "'");
+                return 1;
+            }
 
-            System.out.println("Pinging " + host + " with " + count + " packets...");
+            System.out.println("PING " + host + " (" + count + " packets)");
             System.out.println();
 
-            int successful = 0;
-            long totalTime = 0;
+            InetAddress address;
+            try {
+                address = InetAddress.getByName(host);
+            } catch (UnknownHostException e) {
+                System.err.println("ping: cannot resolve '" + host + "'");
+                return 1;
+            }
 
-            for (int i = 0; i < count; i++) {
+            int successful = 0;
+            long totalMs = 0;
+
+            for (int i = 1; i <= count; i++) {
                 try {
-                    InetAddress inet = InetAddress.getByName(host);
-                    long startTime = System.currentTimeMillis();
-                    boolean reachable = inet.isReachable(5000);
-                    long endTime = System.currentTimeMillis();
-                    long responseTime = endTime - startTime;
+                    long start = System.currentTimeMillis();
+                    boolean reachable = address.isReachable(5000);
+                    long elapsed = System.currentTimeMillis() - start;
 
                     if (reachable) {
-                        System.out.println("Reply from " + host + " (" + inet.getHostAddress()
-                                + "): time=" + responseTime + "ms");
+                        System.out.printf("Reply from %s (%s): time=%dms%n",
+                            host, address.getHostAddress(), elapsed);
                         successful++;
-                        totalTime += responseTime;
+                        totalMs += elapsed;
                     } else {
+                        // Note: isReachable may fail without root — ICMP is unreliable from JVM
                         System.out.println("Request timed out.");
                     }
 
-                    if (i < count - 1) {
-                        Thread.sleep(1000); // Wait 1 second between pings
-                    }
-                } catch (UnknownHostException e) {
-                    System.out.println("Ping request could not find host " + host);
-                    return;
-                } catch (Exception e) {
-                    System.out.println("Ping failed: " + e.getMessage());
+                    if (i < count) Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (IOException e) {
+                    System.err.println("ping: " + e.getMessage());
                 }
             }
 
             System.out.println();
-            System.out.println("--- " + host + " ping statistics ---");
-            System.out.println(count + " packets transmitted, " + successful + " received, "
-                    + ((count - successful) * 100 / count) + "% packet loss");
+            int loss = ((count - successful) * 100) / count;
+            System.out.printf("--- %s ping statistics ---%n", host);
+            System.out.printf("%d packets, %d received, %d%% loss%n", count, successful, loss);
             if (successful > 0) {
-                System.out.println("Average response time: " + (totalTime / successful) + "ms");
+                System.out.printf("avg %.0fms%n", totalMs / (double) successful);
             }
+            return successful > 0 ? 0 : 1;
         }
+
+        @Override public String name()  { return "ping"; }
+        @Override public String usage() { return "ping <host> [count]"; }
     }
 
-    // Download file from URL
-    public static class WgetCommand implements Command {
+    public static final class WgetCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             if (args.length < 2) {
-                System.out.println("usage: wget <url>");
-                System.out.println("   or: wget <url> <output-filename>");
-                return;
+                System.err.println("usage: " + usage());
+                return 1;
             }
 
             String urlString = args[1];
-            String fileName = args.length > 2 ? args[2]
-                    : urlString.substring(urlString.lastIndexOf('/') + 1);
-
-            if (fileName.isEmpty()) {
-                fileName = "index.html";
-            }
-
-            System.out.println("Downloading: " + urlString);
-            System.out.println("Saving to: " + fileName);
+            String fileName  = args.length > 2 ? args[2]
+                : urlString.substring(urlString.lastIndexOf('/') + 1);
+            if (fileName.isBlank()) fileName = "index.html";
 
             try {
-                URL url = new URL(urlString);
-                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                var connection = (HttpURLConnection) URI.create(urlString).toURL().openConnection();
+                connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+                connection.setReadTimeout(READ_TIMEOUT_MS);
                 connection.setRequestMethod("GET");
-                connection.setConnectTimeout(10000);
-                connection.setReadTimeout(10000);
 
-                int responseCode = connection.getResponseCode();
-                if (responseCode != HttpURLConnection.HTTP_OK) {
-                    System.out.println("Error: Server returned HTTP code " + responseCode);
-                    return;
+                int code = connection.getResponseCode();
+                if (code != HttpURLConnection.HTTP_OK) {
+                    System.err.println("wget: server returned HTTP " + code);
+                    return 1;
                 }
 
-                long fileSize = connection.getContentLengthLong();
+                long total = connection.getContentLengthLong();
+                File output = new File(context.currentDirectory(), fileName);
 
-                try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(
-                        new File(App.currentDirectory, fileName))) {
+                try (InputStream in  = connection.getInputStream();
+                     var out = new FileOutputStream(output)) {
+                    byte[] buffer = new byte[BUFFER_SIZE];
+                    int read;
+                    long downloaded = 0;
+                    long lastPrint = System.currentTimeMillis();
 
-                    byte[] buffer = new byte[4096];
-                    int bytesRead;
-                    long totalBytes = 0;
-                    long lastPrintTime = System.currentTimeMillis();
+                    while ((read = in.read(buffer)) != -1) {
+                        out.write(buffer, 0, read);
+                        downloaded += read;
 
-                    while ((bytesRead = in.read(buffer)) != -1) {
-                        out.write(buffer, 0, bytesRead);
-                        totalBytes += bytesRead;
-
-                        // Print progress every 500ms
-                        long currentTime = System.currentTimeMillis();
-                        if (currentTime - lastPrintTime > 500) {
-                            if (fileSize > 0) {
-                                int progress = (int) ((totalBytes * 100) / fileSize);
-                                System.out.print("\rProgress: " + progress + "% ("
-                                        + formatBytes(totalBytes) + " / "
-                                        + formatBytes(fileSize) + ")");
-                            } else {
-                                System.out.print("\rDownloaded: " + formatBytes(totalBytes));
-                            }
-                            lastPrintTime = currentTime;
+                        long now = System.currentTimeMillis();
+                        if (now - lastPrint > 500) {
+                            String progress = total > 0
+                                ? String.format("%d%%", downloaded * 100 / total)
+                                : ByteFormatter.format(downloaded);
+                            System.out.print("\r" + progress);
+                            lastPrint = now;
                         }
                     }
-
-                    System.out.println("\nDownload complete: " + fileName
-                            + " (" + formatBytes(totalBytes) + ")");
                 }
-            } catch (MalformedURLException e) {
-                System.out.println("Error: Invalid URL - " + e.getMessage());
+
+                System.out.printf("%nSaved: %s (%s)%n", fileName, ByteFormatter.format(output.length()));
+            } catch (IllegalArgumentException e) {
+                System.err.println("wget: invalid URL '" + urlString + "'");
+                return 1;
             } catch (IOException e) {
-                System.out.println("\nDownload failed: " + e.getMessage());
+                System.err.println("wget: " + e.getMessage());
+                return 1;
             }
+            return 0;
         }
 
-        private String formatBytes(long bytes) {
-            if (bytes < 1024) {
-                return bytes + " B";
-            }
-            if (bytes < 1024 * 1024) {
-                return String.format("%.2f KB", bytes / 1024.0);
-            }
-            return String.format("%.2f MB", bytes / (1024.0 * 1024.0));
-        }
+        @Override public String name()  { return "wget"; }
+        @Override public String usage() { return "wget <url> [filename]"; }
     }
 
-    // Simple HTTP request command
-    public static class CurlCommand implements Command {
+    public static final class CurlCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             if (args.length < 2) {
-                System.out.println("usage: curl <url>");
-                System.out.println("   or: curl -o <filename> <url>");
-                return;
+                System.err.println("usage: " + usage());
+                return 1;
             }
 
             boolean saveToFile = args[1].equals("-o");
-            String fileName = saveToFile ? args[2] : null;
+            if (saveToFile && args.length < 4) {
+                System.err.println("usage: " + usage());
+                return 1;
+            }
+
+            String fileName  = saveToFile ? args[2] : null;
             String urlString = saveToFile ? args[3] : args[1];
 
             try {
-                URL url = new URL(urlString);
-                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                var connection = (HttpURLConnection) URI.create(urlString).toURL().openConnection();
+                connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+                connection.setReadTimeout(READ_TIMEOUT_MS);
                 connection.setRequestMethod("GET");
-                connection.setConnectTimeout(10000);
 
-                int responseCode = connection.getResponseCode();
-                System.out.println("HTTP Response Code: " + responseCode);
+                int code = connection.getResponseCode();
+                System.out.println("HTTP " + code);
 
-                try (BufferedReader in = new BufferedReader(
-                        new InputStreamReader(connection.getInputStream()))) {
-
-                    String line;
-                    StringBuilder response = new StringBuilder();
-
-                    while ((line = in.readLine()) != null) {
-                        response.append(line).append("\n");
-                    }
-
+                try (var in = new BufferedReader(new InputStreamReader(connection.getInputStream()))) {
                     if (saveToFile) {
-                        File outputFile = new File(App.currentDirectory, fileName);
-                        try (FileWriter writer = new FileWriter(outputFile)) {
-                            writer.write(response.toString());
+                        File out = new File(context.currentDirectory(), fileName);
+                        try (var writer = new FileWriter(out)) {
+                            in.transferTo(writer);
                         }
-                        System.out.println("Saved to: " + fileName);
+                        System.out.println("Saved: " + fileName);
                     } else {
-                        System.out.println("\n--- Response Body ---");
-                        System.out.println(response.toString());
+                        in.lines().forEach(System.out::println);
                     }
                 }
-            } catch (Exception e) {
-                System.out.println("Error: " + e.getMessage());
+            } catch (IllegalArgumentException e) {
+                System.err.println("curl: invalid URL '" + urlString + "'");
+                return 1;
+            } catch (IOException e) {
+                System.err.println("curl: " + e.getMessage());
+                return 1;
             }
+            return 0;
         }
+
+        @Override public String name()  { return "curl"; }
+        @Override public String usage() { return "curl [-o <file>] <url>"; }
     }
 
-    // Show network interfaces
-    public static class IfconfigCommand implements Command {
+    public static final class IfconfigCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
-            System.out.println("Network Interfaces:");
-            System.out.println("==================");
-
+        public int execute(ShellContext context, String[] args) {
             try {
-                java.util.Enumeration<NetworkInterface> interfaces
-                        = NetworkInterface.getNetworkInterfaces();
-
+                Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+                if (interfaces == null) {
+                    System.out.println("No network interfaces found.");
+                    return 0;
+                }
                 while (interfaces.hasMoreElements()) {
                     NetworkInterface ni = interfaces.nextElement();
-
-                    System.out.println("\nInterface: " + ni.getName());
-                    System.out.println("  Display Name: " + ni.getDisplayName());
-                    System.out.println("  Status: " + (ni.isUp() ? "UP" : "DOWN"));
-
-                    java.util.Enumeration<InetAddress> addresses = ni.getInetAddresses();
+                    System.out.printf("%s: <%s> mtu %d%n",
+                        ni.getName(),
+                        ni.isUp() ? "UP" : "DOWN",
+                        ni.getMTU());
+                    var addresses = ni.getInetAddresses();
                     while (addresses.hasMoreElements()) {
-                        InetAddress addr = addresses.nextElement();
-                        System.out.println("  IP Address: " + addr.getHostAddress());
+                        System.out.println("  inet " + addresses.nextElement().getHostAddress());
                     }
                 }
-            } catch (Exception e) {
-                System.out.println("Error retrieving network interfaces: " + e.getMessage());
+            } catch (IOException e) {
+                System.err.println("ifconfig: " + e.getMessage());
+                return 1;
             }
+            return 0;
         }
+
+        @Override public String name()  { return "ifconfig"; }
+        @Override public String usage() { return "ifconfig"; }
     }
 }
