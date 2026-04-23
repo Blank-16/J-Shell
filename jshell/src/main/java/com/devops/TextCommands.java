@@ -1,175 +1,145 @@
 package com.devops;
 
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+import java.util.stream.Collectors;
 
-public class TextCommands {
+public final class TextCommands {
 
-    // UPDATED 'echo' Command: Supports > and >> redirection ---
-    public static class EchoCommand implements Command {
+    private TextCommands() {}
+
+    public static final class EchoCommand implements Command {
 
         @Override
-        @SuppressWarnings("ConvertToStringSwitch")
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             StringBuilder output = new StringBuilder();
             String targetFile = null;
             boolean append = false;
-            boolean redirect = false;
 
-            for (int i = 1; i < args.length; i++) {
-                if (args[i].equals(">")) {
-                    redirect = true;
-                    append = false;
-                    if (i + 1 < args.length) {
-                        targetFile = args[i + 1];
-                    } else {
-                        System.out.println("Error: No filename specified after >");
-                        return;
+            int i = 1;
+            while (i < args.length) {
+                String arg = args[i];
+                if (arg.equals(">") || arg.equals(">>")) {
+                    if (i + 1 >= args.length) {
+                        System.err.println("echo: missing filename after " + arg);
+                        return 1;
                     }
+                    append = arg.equals(">>");
+                    targetFile = args[i + 1];
                     break;
-                } else if (args[i].equals(">>")) {
-                    redirect = true;
-                    append = true;
-                    if (i + 1 < args.length) {
-                        targetFile = args[i + 1];
-                    } else {
-                        System.out.println("Error: No filename specified after >>");
-                        return;
-                    }
-                    break;
-                } else {
-                    if (output.length() > 0) {
-                        output.append(" ");
-                    }
-                    output.append(args[i]);
                 }
+                if (!output.isEmpty()) output.append(' ');
+                output.append(arg);
+                i++;
             }
 
-            String textToWrite = output.toString();
+            String text = output.toString();
 
-            if (redirect) {
-                if (targetFile != null) {
-                    File file = new File(App.currentDirectory, targetFile);
-                    try (FileWriter writer = new FileWriter(file, append)) {
-                        writer.write(textToWrite + System.lineSeparator());
-                        System.out.println((append ? "Appended to " : "Overwrote ") + targetFile);
-                    } catch (IOException e) {
-                        System.out.println("Error writing to file: " + e.getMessage());
-                    }
+            if (targetFile != null) {
+                File file = new File(context.currentDirectory(), targetFile);
+                try (BufferedWriter writer = new BufferedWriter(new FileWriter(file, append))) {
+                    writer.write(text);
+                    writer.newLine();
+                } catch (IOException e) {
+                    System.err.println("echo: " + e.getMessage());
+                    return 1;
                 }
             } else {
-                System.out.println(textToWrite);
+                System.out.println(text);
             }
+            return 0;
         }
+
+        @Override public String name()  { return "echo"; }
+        @Override public String usage() { return "echo <text> [> file] [>> file]"; }
     }
 
-    // --- 'grep' Command (Unchanged) ---
-    public static class GrepCommand implements Command {
+    public static final class GrepCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
             if (args.length < 3) {
-                System.out.println("usage: grep <pattern> <filename>");
-                return;
+                System.err.println("usage: " + usage());
+                return 1;
             }
 
-            String pattern = args[1];
-            String fileName = args[2];
-            File file = new File(App.currentDirectory, fileName);
+            boolean ignoreCase = args[1].equals("-i");
+            String patternStr = ignoreCase ? args[2] : args[1];
+            String fileName   = ignoreCase ? args[3] : args[2];
 
-            if (!file.exists()) {
-                System.out.println("grep: " + fileName + ": No such file");
-                return;
-            }
-
+            Pattern pattern;
             try {
-                List<String> lines = Files.readAllLines(file.toPath());
-                for (String line : lines) {
-                    if (line.contains(pattern)) {
+                pattern = ignoreCase
+                    ? Pattern.compile(patternStr, Pattern.CASE_INSENSITIVE)
+                    : Pattern.compile(patternStr);
+            } catch (PatternSyntaxException e) {
+                System.err.println("grep: invalid pattern '" + patternStr + "': " + e.getDescription());
+                return 1;
+            }
+
+            File file = new File(context.currentDirectory(), fileName);
+            if (!file.exists()) {
+                System.err.println("grep: " + fileName + ": No such file");
+                return 1;
+            }
+
+            int matchCount = 0;
+            try (BufferedReader reader = Files.newBufferedReader(file.toPath())) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (pattern.matcher(line).find()) {
                         System.out.println(line);
+                        matchCount++;
                     }
                 }
             } catch (IOException e) {
-                System.out.println("Error processing file: " + e.getMessage());
+                System.err.println("grep: " + e.getMessage());
+                return 1;
             }
+
+            return matchCount > 0 ? 0 : 1;
         }
+
+        @Override public String name()  { return "grep"; }
+        @Override public String usage() { return "grep [-i] <pattern> <file>"; }
     }
 
-    //'help' Command
-    public static class HelpCommand implements Command {
+    public static final class HelpCommand implements Command {
+
+        private final CommandRegistry registry;
+
+        public HelpCommand(CommandRegistry registry) {
+            this.registry = registry;
+        }
 
         @Override
-        public void execute(String[] args) {
+        public int execute(ShellContext context, String[] args) {
+            // Drive help from the registry — never drifts out of sync
+            Map<String, String> usages = registry.all().entrySet().stream()
+                .filter(e -> !e.getValue().usage().isEmpty())
+                .collect(Collectors.toMap(
+                    Map.Entry::getKey,
+                    e -> e.getValue().usage()
+                ));
 
-            System.out.println("NAVIGATION & FILE SYSTEM:");
-            System.out.println("  ls              - List directory contents");
-            System.out.println("  pwd             - Print working directory");
-            System.out.println("  cd <dir>        - Change directory");
-            System.out.println("  mkdir <dir>     - Create directory");
+            System.out.println("Available commands:");
             System.out.println();
-
-            System.out.println("FILE MANIPULATION:");
-            System.out.println("  touch <file>    - Create empty file");
-            System.out.println("  rm <file>       - Remove file/directory");
-            System.out.println("  cat <file>      - Display file contents");
-            System.out.println("  cp <src> <dst>  - Copy file (use -r for directories)");
-            System.out.println("  mv <src> <dst>  - Move/rename file");
+            usages.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(e -> System.out.printf("  %-12s %s%n", e.getKey(), e.getValue()));
             System.out.println();
-
-            System.out.println("TEXT UTILITIES:");
-            System.out.println("  echo <text>     - Print text (supports > and >>)");
-            System.out.println("  grep <pattern> <file> - Search for pattern");
-            System.out.println("  wc <file>       - Count lines, words, characters");
-            System.out.println("  head <file>     - Show first 10 lines");
-            System.out.println("  tail <file>     - Show last 10 lines");
-            System.out.println("  sort <file>     - Sort file contents");
-            System.out.println("  uniq <file>     - Show unique lines");
-            System.out.println("  diff <f1> <f2>  - Compare two files");
-            System.out.println();
-
-            System.out.println("SEARCH & FIND:");
-            System.out.println("  find <pattern>  - Find files by name");
-            System.out.println("  du <path>       - Show disk usage");
-            System.out.println();
-
-            System.out.println("COMPRESSION:");
-            System.out.println("  zip <out.zip> <files>  - Create zip archive");
-            System.out.println("  unzip <file.zip>       - Extract zip archive");
-            System.out.println("  gzip <file>            - Compress with gzip");
-            System.out.println("  gunzip <file.gz>       - Decompress gzip file");
-            System.out.println();
-
-            System.out.println("NETWORK:");
-            System.out.println("  ping <host>     - Ping a host");
-            System.out.println("  wget <url>      - Download file from URL");
-            System.out.println("  curl <url>      - Make HTTP request");
-            System.out.println("  ifconfig        - Show network interfaces");
-            System.out.println();
-
-            System.out.println("SYSTEM & PROCESS:");
-            System.out.println("  ps              - Show process information");
-            System.out.println("  exec <cmd>      - Execute system command");
-            System.out.println("  env [var]       - Show environment variables");
-            System.out.println("  uname           - Show system information");
-            System.out.println("  history         - Show command history");
-            System.out.println("  whoami          - Show current user");
-            System.out.println("  date            - Show current date/time");
-            System.out.println("  clear           - Clear screen");
-            System.out.println();
-
-            System.out.println("UTILITIES:");
-            System.out.println("  checksum <file> - Calculate file checksum");
-            System.out.println();
-
-            System.out.println("TIPS:");
-            System.out.println("  - Use 'exit' to quit J-Shell");
-            System.out.println("  - Many commands support flags (e.g., -r, -n, -h)");
-            System.out.println("  - Use > to redirect output to file");
-            System.out.println("  - Use >> to append output to file");
-            System.out.println();
+            System.out.println("Type 'exit' to quit.");
+            return 0;
         }
+
+        @Override public String name()  { return "help"; }
+        @Override public String usage() { return "help"; }
     }
 }

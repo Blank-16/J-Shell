@@ -2,59 +2,65 @@ package com.devops;
 
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 
-public class SystemCommands {
+public final class SystemCommands {
 
-    // --- 'history' Command: Show session history ---
-    public static class HistoryCommand implements Command {
+    private SystemCommands() {}
+
+    public static final class HistoryCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
-            if (App.commandHistory.isEmpty()) {
-                System.out.println("No command history.");
-                return;
+        public int execute(ShellContext context, String[] args) {
+            List<String> history = context.history();
+            if (history.isEmpty()) {
+                System.out.println("No history.");
+                return 0;
             }
-
-            int index = 1;
-            for (String cmd : App.commandHistory) {
-                System.out.printf("%5d  %s%n", index++, cmd);
+            for (int i = 0; i < history.size(); i++) {
+                System.out.printf("%5d  %s%n", i + 1, history.get(i));
             }
+            return 0;
         }
+
+        @Override public String name()  { return "history"; }
+        @Override public String usage() { return "history"; }
     }
 
-    // --- 'whoami' Command: Show current user ---
-    public static class WhoamiCommand implements Command {
+    public static final class WhoamiCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
-            String username = System.getProperty("user.name");
-            if (username != null) {
-                System.out.println(username);
-            } else {
-                System.out.println("Unknown user");
-            }
+        public int execute(ShellContext context, String[] args) {
+            System.out.println(System.getProperty("user.name", "unknown"));
+            return 0;
         }
+
+        @Override public String name()  { return "whoami"; }
+        @Override public String usage() { return "whoami"; }
     }
 
-    // --- 'date' Command: Show current system date/time ---
-    public static class DateCommand implements Command {
+    public static final class DateCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
-            ZonedDateTime now = ZonedDateTime.now();
-            System.out.println(now.format(DateTimeFormatter.RFC_1123_DATE_TIME));
-            // Or simply: System.out.println(now);
+        public int execute(ShellContext context, String[] args) {
+            System.out.println(ZonedDateTime.now().format(DateTimeFormatter.RFC_1123_DATE_TIME));
+            return 0;
         }
+
+        @Override public String name()  { return "date"; }
+        @Override public String usage() { return "date"; }
     }
 
-    // --- 'clear' Command: Clear console ---
-    public static class ClearCommand implements Command {
+    public static final class ClearCommand implements Command {
 
         @Override
-        public void execute(String[] args) {
-            // ANSI escape codes work in most modern terminals
+        public int execute(ShellContext context, String[] args) {
             System.out.print("\033[H\033[2J");
             System.out.flush();
+            return 0;
         }
+
+        @Override public String name()  { return "clear"; }
+        @Override public String usage() { return "clear"; }
     }
 }
