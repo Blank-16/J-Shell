@@ -1,53 +1,36 @@
-# Multi-stage build for J-Shell with JDK 21
-
-# ===== BUILD STAGE =====
+# Stage 1: build
+# Separate from runtime so the JDK and Maven are not in the final image.
 FROM maven:3.9-eclipse-temurin-21 AS build
 
-# Set working directory
 WORKDIR /app
 
-# Copy pom.xml first (for better layer caching)
+# Copy pom first — Docker caches this layer until pom.xml changes,
+# so dependency downloads are skipped on source-only rebuilds.
 COPY pom.xml .
+RUN mvn dependency:go-offline -B -q
 
-# Download dependencies (this layer will be cached if pom.xml doesn't change)
-RUN mvn dependency:go-offline -B
-
-# Copy source code
 COPY src ./src
+RUN mvn clean package -DskipTests -q
 
-# Build the application (skip tests for faster builds)
-RUN mvn clean package -DskipTests
+# Stage 2: runtime
+# JRE-only Alpine image — ~70 MB vs ~500 MB for the full JDK image.
+FROM eclipse-temurin:21-jre-alpine AS runtime
 
-# ===== RUNTIME STAGE =====
-FROM eclipse-temurin:21-jre-alpine
-
-# Set working directory
 WORKDIR /app
 
-# Copy the built JAR from build stage
-COPY --from=build /app/target/j-shell-*.jar app.jar
-
-# Create a non-root user for security
+# Non-root user — container processes must not run as root
 RUN addgroup -S jshell && adduser -S jshell -G jshell
 
-# Create workspace directory for file operations
+COPY --from=build /app/target/j-shell-*.jar app.jar
+
+# Workspace directory for file operations — owned by the app user
 RUN mkdir -p /app/workspace && chown -R jshell:jshell /app
 
-# Switch to non-root user
 USER jshell
 
-# Set environment variables
-ENV JAVA_OPTS="-Xmx512m -Xms256m"
+ENV JAVA_OPTS="-Xmx512m -Xms128m -XX:+UseSerialGC"
 
-# Expose port (if you add web interface later)
-# EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD pgrep -f "app.jar" > /dev/null || exit 1
 
-# Health check (optional)
-# HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-#   CMD java -version || exit 1
-
-# Run the application
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
-
-# Default command (can be overridden)
-CMD []
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]
