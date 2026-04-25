@@ -18,7 +18,7 @@ public final class TextCommands {
     public static final class EchoCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ExecutionResult execute(ShellContext context, String[] args) {
             StringBuilder output = new StringBuilder();
             String targetFile = null;
             boolean append = false;
@@ -29,7 +29,7 @@ public final class TextCommands {
                 if (arg.equals(">") || arg.equals(">>")) {
                     if (i + 1 >= args.length) {
                         System.err.println("echo: missing filename after " + arg);
-                        return 1;
+                        return ExecutionResult.fail(context);
                     }
                     append = arg.equals(">>");
                     targetFile = args[i + 1];
@@ -49,12 +49,12 @@ public final class TextCommands {
                     writer.newLine();
                 } catch (IOException e) {
                     System.err.println("echo: " + e.getMessage());
-                    return 1;
+                    return ExecutionResult.fail(context);
                 }
             } else {
                 System.out.println(text);
             }
-            return 0;
+            return ExecutionResult.ok(context);
         }
 
         @Override public String name()  { return "echo"; }
@@ -64,10 +64,10 @@ public final class TextCommands {
     public static final class GrepCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ExecutionResult execute(ShellContext context, String[] args) {
             if (args.length < 3) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return ExecutionResult.misuse(context);
             }
 
             boolean ignoreCase = args[1].equals("-i");
@@ -81,13 +81,13 @@ public final class TextCommands {
                     : Pattern.compile(patternStr);
             } catch (PatternSyntaxException e) {
                 System.err.println("grep: invalid pattern '" + patternStr + "': " + e.getDescription());
-                return 1;
+                return ExecutionResult.fail(context);
             }
 
             File file = new File(context.currentDirectory(), fileName);
             if (!file.exists()) {
                 System.err.println("grep: " + fileName + ": No such file");
-                return 1;
+                return ExecutionResult.fail(context);
             }
 
             int matchCount = 0;
@@ -101,10 +101,13 @@ public final class TextCommands {
                 }
             } catch (IOException e) {
                 System.err.println("grep: " + e.getMessage());
-                return 1;
+                return ExecutionResult.fail(context);
             }
 
-            return matchCount > 0 ? 0 : 1;
+            // POSIX: exit 1 = no match (not an error), exit 0 = match found
+            return matchCount > 0
+                ? ExecutionResult.ok(context)
+                : ExecutionResult.of(context, 1);
         }
 
         @Override public String name()  { return "grep"; }
@@ -120,7 +123,7 @@ public final class TextCommands {
         }
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ExecutionResult execute(ShellContext context, String[] args) {
             // Drive help from the registry — never drifts out of sync
             Map<String, String> usages = registry.all().entrySet().stream()
                 .filter(e -> !e.getValue().usage().isEmpty())
@@ -136,7 +139,7 @@ public final class TextCommands {
                 .forEach(e -> System.out.printf("  %-12s %s%n", e.getKey(), e.getValue()));
             System.out.println();
             System.out.println("Type 'exit' to quit.");
-            return 0;
+            return ExecutionResult.ok(context);
         }
 
         @Override public String name()  { return "help"; }

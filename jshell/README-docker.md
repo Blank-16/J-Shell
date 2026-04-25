@@ -1,216 +1,232 @@
-# J-Shell Docker Setup
+# J-Shell — Docker Guide
 
-## 📁 Project Structure
+Run J-Shell without installing Java or Maven locally. Three modes are available depending on what you need.
 
-```
-j-shell/
-├── Dockerfile
-├── docker-compose.yml
-├── .dockerignore
-├── pom.xml
-├── README.md
-└── src/
-    └── main/
-        └── java/
-            └── com/
-                └── devops/
-                    ├── App.java
-                    ├── Command.java
-                    ├── CommandRegistry.java
-                    ├── FileSystemCommands.java
-                    ├── FileManipulationCommands.java
-                    ├── TextCommands.java
-                    ├── AdvancedFileCommands.java
-                    ├── SystemCommands.java
-                    ├── SearchCommands.java
-                    ├── CompressionCommands.java
-                    ├── NetworkCommands.java
-                    ├── ProcessCommands.java
-                    └── UtilityCommands.java
-.gitignore
-README.md
-quickStart.bat
-```
+---
 
-##  Quick Start
+## Prerequisites
 
-### Option 1: Using Docker directly
+- [Docker](https://docs.docker.com/get-docker/) 24+
+- [Docker Compose](https://docs.docker.com/compose/install/) v2+
 
-**Build the image:**
-```bash
-docker build -t jshell:latest .
-```
-
-**Run the container (interactive mode):**
-```bash
-docker run -it --rm jshell:latest
-```
-
-**Run with mounted workspace:**
-```Cmd
-docker run -it --rm -v %cd%/workspace:/app/workspace jshell:latest
-```
-```PowerShell
-docker run -it --rm -v ${PWD}/workspace:/app/workspace jshell:latest
-```
-
-### Option 2: Using Docker Compose
-
-**Build and run:**
-```bash
-docker-compose up --build
-```
-
-**Run in detached mode:**
-```bash
-docker-compose up -d
-```
-
-**Attach to running container:**
-```bash
-docker attach jshell-app
-```
-
-**Stop the container:**
-```bash
-docker-compose down
-```
-
-##  Build Locally First (Without Docker)
-
-If you want to test locally before Docker:
+Verify:
 
 ```bash
-# Compile
-mvn clean compile
-
-# Package
-mvn clean package
-
-# Run
-java -jar target/j-shell-1.0.0.jar
+docker --version        # Docker version 24.x or higher
+docker compose version  # Docker Compose version v2.x or higher
 ```
 
-##  Docker Commands Reference
+---
 
-### Build Commands
+## Image Overview
+
+The `Dockerfile` uses a two-stage build:
+
+| Stage | Base image | Purpose |
+|-------|-----------|---------|
+| `build` | `maven:3.9-eclipse-temurin-21` | Compiles sources, runs tests, produces fat jar |
+| `runtime` | `eclipse-temurin:21-jre-alpine` | Runs the jar — ~70 MB, no JDK, no Maven |
+
+The runtime image runs as a non-root user (`jshell`) by default.
+
+---
+
+## Services
+
+Three services are defined in `docker-compose.yml`:
+
+| Service | Purpose | Exits when done? |
+|---------|---------|-----------------|
+| `jshell` | Interactive shell session | No — stays open |
+| `jshell-test` | Runs `mvn test` and prints results | Yes |
+| `jshell-dev` | Live dev — mounts source, builds and runs | No — stays open |
+
+---
+
+## Quickstart — Interactive Session
+
 ```bash
-# Build with custom tag
-docker build -t jshell:v1.0 .
+cd jshell
 
-# Build with no cache
-docker build --no-cache -t jshell:latest .
+# Build the image (first time only)
+docker compose build jshell
+
+# Start an interactive session
+docker compose run --rm jshell
 ```
 
-### Run Commands
+```
+Welcome to J-Shell — type 'help' or 'exit'.
+
+/app/workspace > mkdir project && cd project && touch main.java
+/app/workspace/project > echo "hello from docker" > notes.txt
+/app/workspace/project > cat notes.txt
+hello from docker
+/app/workspace/project > exit
+Goodbye!
+```
+
+Files written to `/app/workspace` inside the container are persisted in `./workspace` on your host.
+
+---
+
+## Running Tests
+
 ```bash
-# Interactive mode
-docker run -it jshell:latest
+cd jshell
 
-# With workspace directory
-docker run -it -v $(pwd)/workspace:/app/workspace jshell:latest
-
-# With custom memory settings
-docker run -it -e JAVA_OPTS="-Xmx1g" jshell:latest
-
-# Run and remove container after exit
-docker run -it --rm jshell:latest
+docker compose run --rm jshell-test
 ```
 
-### Management Commands
+Expected output:
+
+```
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.devops.AppTest
+[INFO] Tests run: 42, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+```
+
+Maven dependencies are cached in a named Docker volume (`maven-cache`). Subsequent runs skip the download phase.
+
+---
+
+## Development Mode
+
+Mounts your local `src/` and `pom.xml` into the container read-only. Any local source change triggers a rebuild when you restart the service.
+
 ```bash
-# List images
-docker images | grep jshell
+cd jshell
 
-# Remove image
-docker rmi jshell:latest
-
-# List running containers
-docker ps
-
-# Stop container
-docker stop jshell-app
-
-# Remove stopped containers
-docker container prune
+docker compose run --rm jshell-dev
 ```
 
-##  Troubleshooting
+The container runs `mvn clean package -DskipTests -q` on startup, then launches the shell. Edit source locally, restart the service to pick up changes.
 
-### Issue: Container exits immediately
-**Solution:** Make sure you use `-it` flags for interactive mode
 ```bash
-docker run -it jshell:latest
+# Rebuild after source changes
+docker compose run --rm jshell-dev
 ```
 
-### Issue: Build fails - dependencies not found
-**Solution:** Clear Maven cache and rebuild
+---
+
+## Persistent Workspace
+
+The `./workspace` directory (relative to `jshell/`) is mounted into the container at `/app/workspace`. Files created there persist across container restarts.
+
 ```bash
-docker build --no-cache -t jshell:latest .
+# Create the directory if it doesn't exist yet
+mkdir -p jshell/workspace
+
+# Start session — files in /app/workspace are mirrored to ./workspace on your host
+docker compose run --rm jshell
 ```
 
-### Issue: Can't access files in container
-**Solution:** Mount a volume
+---
+
+## Building Manually
+
 ```bash
-docker run -it -v $(pwd)/workspace:/app/workspace jshell:latest
+cd jshell
+
+# Build only the runtime image
+docker build --target runtime -t jshell:latest .
+
+# Run it directly (without Compose)
+docker run --rm -it \
+  -v "$(pwd)/workspace:/app/workspace" \
+  jshell:latest
 ```
 
-### Issue: Permission denied
-**Solution:** Run with user privileges or adjust permissions
+Build only the test stage (useful in CI):
+
 ```bash
-# On Linux/Mac
-docker run -it --user $(id -u):$(id -g) jshell:latest
+docker build --target build -t jshell-build:latest .
+docker run --rm jshell-build:latest mvn test
 ```
 
-## Image Size Optimization
+---
 
-The Dockerfile uses multi-stage build to minimize image size:
-- **Build stage:** Uses full Maven + JDK (~800MB)
-- **Runtime stage:** Uses slim JRE (~200MB)
-- **Final image:** ~250MB
+## Environment Variables
 
-To check image size:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JAVA_OPTS` | `-Xmx512m -Xms128m -XX:+UseSerialGC` | JVM flags passed to the runtime |
+| `MAVEN_OPTS` | `-Xmx512m` | Maven JVM flags (test service only) |
+
+Override at runtime:
+
 ```bash
-docker images jshell:latest
+docker compose run --rm -e JAVA_OPTS="-Xmx1g" jshell
 ```
 
-## Networking (Optional)
+---
 
-For adding a web interface later (if added): 
+## Volumes
+
+| Volume | Type | Mounted at | Purpose |
+|--------|------|-----------|---------|
+| `./workspace` | Bind mount | `/app/workspace` | Persistent file storage across sessions |
+| `maven-cache` | Named volume | `/root/.m2` | Maven dependency cache — survives container removal |
+
+Clear the Maven cache:
+
+```bash
+docker volume rm jshell_maven-cache
+```
+
+---
+
+## Cleanup
+
+```bash
+# Remove containers
+docker compose down
+
+# Remove containers and named volumes (clears Maven cache)
+docker compose down -v
+
+# Remove built images
+docker rmi jshell:latest jshell-test:latest jshell-dev:latest
+
+# Full clean
+docker compose down -v --rmi all
+```
+
+---
+
+## CI Integration
+
+Run tests in CI without any local Java setup:
 
 ```yaml
-# In docker-compose.yml
-ports:
-  - "8080:8080"
+# .github/workflows/test.yml
+name: Test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        run: |
+          cd jshell
+          docker compose run --rm jshell-test
 ```
 
-Then access at: `http://localhost:8080`
+---
 
-## Security Best Practices
+## Known Limitations in Docker
 
-The Dockerfile includes:
-- ✅ Non-root user (`jshell`)
-- ✅ Multi-stage build (smaller attack surface)
-- ✅ Alpine base image (minimal packages)
-- ✅ No unnecessary tools in runtime
+**`ping`** — ICMP is blocked in most container runtimes without `--cap-add NET_ADMIN`. Use `exec ping <host>` to delegate to the Alpine system binary instead.
 
-##  Notes
+**`clear`** — ANSI escape codes work in Docker's TTY mode (`-it`). They have no effect when stdout is redirected.
 
-- The container runs with a non-root user for security
-- Workspace directory (`/app/workspace`) is available for file operations
-- Network commands (ping, wget, curl) work within the container
-- System commands (exec) are limited to what's available in Alpine Linux
+**`exec`** — runs inside the container as the `jshell` user. Commands available depend on what is installed in the Alpine runtime image. The base image includes `sh`, `ls`, `cat`, and standard Alpine utilities.
 
-##  Next Steps
-
-1. Create the `workspace/` directory for shared files
-2. Build and test the Docker image
-3. Try the commands inside the container
-4. Customize the Dockerfile for your needs
-
-##  Tips
-
-- Use `.dockerignore` to speed up builds
-- Mount volumes for persistent data
-- Use `docker-compose` for easier management
-- Tag images with version numbers for production
+**Interactive mode requires TTY** — always use `docker compose run` (not `docker compose up`) for interactive sessions. `docker compose up` does not allocate a TTY.

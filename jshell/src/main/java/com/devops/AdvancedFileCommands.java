@@ -12,14 +12,14 @@ public final class AdvancedFileCommands {
     public static final class CpCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ExecutionResult execute(ShellContext context, String[] args) {
             boolean recursive = args.length > 1 && args[1].equals("-r");
             int srcIdx  = recursive ? 2 : 1;
             int destIdx = recursive ? 3 : 2;
 
             if (args.length < destIdx + 1) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return ExecutionResult.misuse(context);
             }
 
             File source = new File(context.currentDirectory(), args[srcIdx]);
@@ -27,11 +27,11 @@ public final class AdvancedFileCommands {
 
             if (!source.exists()) {
                 System.err.println("cp: '" + args[srcIdx] + "': No such file or directory");
-                return 1;
+                return ExecutionResult.fail(context);
             }
             if (source.isDirectory() && !recursive) {
                 System.err.println("cp: '" + args[srcIdx] + "' is a directory (use -r)");
-                return 1;
+                return ExecutionResult.fail(context);
             }
 
             try {
@@ -43,9 +43,9 @@ public final class AdvancedFileCommands {
                 }
             } catch (IOException e) {
                 System.err.println("cp: " + e.getMessage());
-                return 1;
+                return ExecutionResult.fail(context);
             }
-            return 0;
+            return ExecutionResult.ok(context);
         }
 
         private void copyDirectory(File src, File dest) throws IOException {
@@ -69,10 +69,10 @@ public final class AdvancedFileCommands {
     public static final class MvCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ExecutionResult execute(ShellContext context, String[] args) {
             if (args.length < 3) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return ExecutionResult.misuse(context);
             }
 
             File source = new File(context.currentDirectory(), args[1]);
@@ -80,21 +80,21 @@ public final class AdvancedFileCommands {
 
             if (!source.exists()) {
                 System.err.println("mv: '" + args[1] + "': No such file or directory");
-                return 1;
+                return ExecutionResult.fail(context);
             }
 
             try {
                 File finalDest = dest.isDirectory() ? new File(dest, source.getName()) : dest;
                 if (source.getCanonicalPath().equals(finalDest.getCanonicalPath())) {
                     System.err.println("mv: '" + args[1] + "' and '" + args[2] + "' are the same file");
-                    return 1;
+                    return ExecutionResult.fail(context);
                 }
                 Files.move(source.toPath(), finalDest.toPath(), StandardCopyOption.REPLACE_EXISTING);
             } catch (IOException e) {
                 System.err.println("mv: " + e.getMessage());
-                return 1;
+                return ExecutionResult.fail(context);
             }
-            return 0;
+            return ExecutionResult.ok(context);
         }
 
         @Override public String name()  { return "mv"; }
