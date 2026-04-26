@@ -7,9 +7,10 @@
 [![Java](https://img.shields.io/badge/Java-21-ED8B00?style=flat&logo=openjdk&logoColor=white)](https://openjdk.org/projects/jdk/21/)
 [![Maven](https://img.shields.io/badge/Maven-3.8+-C71A36?style=flat&logo=apachemaven&logoColor=white)](https://maven.apache.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-27%20passing-brightgreen?style=flat)]()
+[![Tests](https://img.shields.io/badge/Tests-42%20passing-brightgreen?style=flat)]()
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat&logo=docker&logoColor=white)](jshell/README-DOCKER.md)
 
-37 commands · No native dependencies · Runs entirely on the JVM
+37 commands · `&&` chaining · Myers diff · No native dependencies
 
 </div>
 
@@ -17,9 +18,15 @@
 
 ## Overview
 
-J-Shell is a shell emulator that implements a Unix-like command experience inside the JVM. It covers filesystem navigation, text processing, compression, networking, and process inspection — with no OS-level shell or native binaries required for core functionality.
+J-Shell is a shell emulator that runs entirely on the JVM — no OS-level shell, no native binaries. It covers filesystem navigation, text processing, compression, networking, and process inspection with correct POSIX semantics where the JVM allows.
 
-Built with a clean command pattern, injected context, and quote-aware tokenization, it handles real-world input like `echo "hello world" > file.txt` and `grep "foo\s+\d+" log.txt` correctly.
+**What makes it non-trivial:**
+- Sealed `Command` interface — adding a command without registering it is a compile error
+- `ExecutionResult` record — every command returns both an updated context and a POSIX exit code
+- `&&` chaining — `mkdir foo && cd foo && touch bar` works correctly, stops on first failure
+- Myers O(ND) diff — correct LCS-based diff, not line-number alignment
+- Quote-aware tokenizer — `echo "hello world" > file.txt` produces three tokens, not five
+- Immutable session state — `cd` returns a new `ShellContext`, nothing mutates in place
 
 ---
 
@@ -30,29 +37,32 @@ Built with a clean command pattern, injected context, and quote-aware tokenizati
 mvn clean package -q
 
 # Run
-java -jar target/j-shell-1.0.0.jar
+java -jar target/j-shell-2.0.0.jar
 ```
 
 ```
 Welcome to J-Shell — type 'help' or 'exit'.
 
-/home/user/projects > ls
-/home/user/projects > mkdir -p src/main/java
-/home/user/projects > echo "hello world" > greeting.txt
-/home/user/projects > grep "hello" greeting.txt
+/home/user/projects > mkdir -p src/main/java && cd src && touch README.md
+/home/user/src > echo "hello world" > greeting.txt
+/home/user/src > grep "hello" greeting.txt
 hello world
-/home/user/projects > exit
+/home/user/src > diff greeting.txt greeting.txt
+Files are identical.
+/home/user/src > exit
 Goodbye!
 ```
+
+> **Docker users** — see [README-DOCKER.md](jshell/README-docker.md) to run without installing Java or Maven locally.
 
 ---
 
 ## Requirements
 
-| Tool | Version |
-|------|---------|
-| Java | 21+     |
-| Maven | 3.8+   |
+| Tool  | Version |
+|-------|---------|
+| Java  | 21+     |
+| Maven | 3.8+    |
 
 ---
 
@@ -70,7 +80,7 @@ Goodbye!
 | `rm` | `rm [-r] <target>` | Remove file or directory; `-r` for recursive |
 | `cp` | `cp [-r] <src> <dest>` | Copy file or directory; `-r` for recursive |
 | `mv` | `mv <src> <dest>` | Move or rename |
-| `cat` | `cat <file>` | Print file contents (streamed, safe on large files) |
+| `cat` | `cat <file>` | Stream file contents — safe on large files |
 | `find` | `find <pattern> [-r]` | Search filenames by substring; `-r` recurses |
 | `du` | `du [-h] [path]` | Show disk usage; `-h` human-readable |
 
@@ -78,21 +88,21 @@ Goodbye!
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `echo` | `echo <text> [> file] [>> file]` | Print text with redirect (`>`) and append (`>>`) support |
-| `grep` | `grep [-i] <pattern> <file>` | Search with full regex; `-i` case-insensitive |
+| `echo` | `echo <text> [> file] [>> file]` | Print text; supports redirect and append |
+| `grep` | `grep [-i] <pattern> <file>` | Full regex search; `-i` case-insensitive; exit 1 on no match |
 | `wc` | `wc [-l\|-w\|-c] <file>` | Count lines, words, or characters |
-| `diff` | `diff <file1> <file2>` | Compare two files line by line |
+| `diff` | `diff <file1> <file2>` | Myers O(ND) diff — correct on insertions and deletions |
 | `sort` | `sort [-r] [-n] <file>` | Sort lines; `-r` reverse, `-n` numeric |
-| `uniq` | `uniq [-c] <file>` | Remove adjacent duplicate lines; `-c` shows count |
-| `head` | `head [-n count] <file>` | Print first N lines (default 10) |
-| `tail` | `tail [-n count] <file>` | Print last N lines (default 10) |
+| `uniq` | `uniq [-c] <file>` | Remove adjacent duplicate lines (POSIX-correct); `-c` shows count |
+| `head` | `head [-n count] <file>` | Print first N lines — stops reading early |
+| `tail` | `tail [-n count] <file>` | Print last N lines — O(N) ring buffer |
 
 ### Compression
 
 | Command | Usage | Description |
 |---------|-------|-------------|
 | `zip` | `zip [-r] <output.zip> <files...>` | Create zip archive; `-r` includes directories |
-| `unzip` | `unzip <file.zip> [dest]` | Extract zip archive (zip slip protected) |
+| `unzip` | `unzip <file.zip> [dest]` | Extract zip — zip slip path traversal blocked |
 | `gzip` | `gzip <file>` | Compress file to `<file>.gz` |
 | `gunzip` | `gunzip <file.gz>` | Decompress `.gz` file |
 
@@ -100,7 +110,7 @@ Goodbye!
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `ping` | `ping <host> [count]` | Ping a host (see limitations) |
+| `ping` | `ping <host> [count]` | Ping a host (see known limitations) |
 | `wget` | `wget <url> [filename]` | Download file with progress display |
 | `curl` | `curl [-o <file>] <url>` | Fetch URL — print or save response |
 | `ifconfig` | `ifconfig` | List network interfaces and addresses |
@@ -109,55 +119,80 @@ Goodbye!
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `ps` | `ps [-v]` | Show JVM process info; `-v` lists all threads |
+| `ps` | `ps [-v]` | JVM process stats; `-v` lists all threads |
 | `exec` | `exec <command> [args...]` | Run an external system command |
-| `env` | `env [variable]` | Show all environment variables or look up one |
-| `uname` | `uname` | Print OS, Java version, CPU count, memory |
-| `whoami` | `whoami` | Print current OS username |
-| `date` | `date` | Print current date and time (RFC-1123) |
-| `history` | `history` | Show numbered command history for this session |
+| `env` | `env [variable]` | Show environment variables or look up one |
+| `uname` | `uname` | OS, Java version, CPU count, memory |
+| `whoami` | `whoami` | Current OS username |
+| `date` | `date` | Current date and time (RFC-1123) |
+| `history` | `history` | Numbered command history for this session |
 | `clear` | `clear` | Clear the terminal screen |
-| `help` | `help` | List all available commands |
+| `help` | `help` | List all available commands with usage |
 | `checksum` | `checksum [-md5\|-sha1\|-sha256] <file>` | Compute file hash (default SHA-256) |
+
+---
+
+## && Chaining
+
+Commands can be chained with `&&`. Each stage runs only if the previous stage exited with code 0.
+
+```bash
+mkdir project && cd project && touch main.java && echo "ready" > status.txt
+```
+
+Quoted `&&` is not treated as a separator:
+
+```bash
+echo "hello && world" > file.txt   # writes: hello && world
+```
 
 ---
 
 ## Architecture
 
 ```
-App
-├── ShellContext          Mutable session state (cwd, history) — injected, never global
-├── Tokenizer             Quote-aware input splitter ("hello world" → single token)
-├── CommandRegistry       String → Command map with Optional<Command> lookup
-├── Command (interface)   int execute(ShellContext, String[])
-│   ├── FileSystemCommands        ls, pwd, cd, mkdir, touch, rm, cp, mv, cat, find, du
-│   ├── FileManipulationCommands  touch, rm, cat
-│   ├── TextCommands              echo, grep, help
-│   ├── AdvancedFileCommands      cp, mv
-│   ├── SystemCommands            history, whoami, date, clear
-│   ├── SearchCommands            find, wc, diff
-│   ├── CompressionCommands       zip, unzip, gzip, gunzip
-│   ├── NetworkCommands           ping, wget, curl, ifconfig
-│   ├── ProcessCommands           ps, exec, env, uname
-│   └── UtilityCommands           sort, uniq, checksum, du, head, tail
-└── ByteFormatter         Shared human-readable byte size formatting
+App  (REPL loop + && dispatcher)
+├── ShellContext        Session state — immutable directory via withDirectory()
+├── Tokenizer           Quote-aware character state machine
+├── CommandRegistry     String → Command lookup via Optional<Command>
+├── ExecutionResult     record(ShellContext context, int exitCode)
+├── Command (sealed)    ExecutionResult execute(ShellContext, String[])
+│   ├── FileSystemCommands        ls pwd cd mkdir touch rm cp mv cat find du
+│   ├── FileManipulationCommands  touch rm cat
+│   ├── TextCommands              echo grep help
+│   ├── AdvancedFileCommands      cp mv
+│   ├── SystemCommands            history whoami date clear
+│   ├── SearchCommands            find wc diff
+│   ├── CompressionCommands       zip unzip gzip gunzip
+│   ├── NetworkCommands           ping wget curl ifconfig
+│   ├── ProcessCommands           ps exec env uname
+│   └── UtilityCommands           sort uniq checksum du head tail
+└── ByteFormatter       Shared byte size formatting
 ```
 
-Each command group is a `final` class with a `private` constructor — used purely as a namespace for `static final` inner command classes. No shared mutable state between commands.
+### Exit Code Semantics
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Failure or meaningful negative result (`grep` no-match, `diff` files-differ) |
+| 2 | Misuse — bad arguments or missing operands |
 
 ---
 
 ## Design Highlights
 
-**No global state** — all session state lives in `ShellContext`, which is constructed once and injected into every command call. Commands are fully isolated and testable without touching `App`.
+**Sealed `Command` interface** — every permitted subtype is declared in the `permits` list. Adding a command without listing it is a compile error. Silent registration gaps are impossible.
 
-**Quote-aware tokenizer** — a character state machine correctly handles `echo "hello world" > out.txt` as three tokens, not five.
+**`ExecutionResult` record** — `execute()` returns both the updated `ShellContext` and a POSIX exit code. `&&` chaining inspects `result.succeeded()` to decide whether to continue the chain.
 
-**Streaming I/O** — `cat`, `grep`, `wc`, `head`, and `tail` all use `BufferedReader` and never load an entire file into memory. `tail` uses a fixed-size ring buffer, making it O(N) in memory for any file size.
+**Immutable session state** — `cd` calls `context.withDirectory()` which returns a new `ShellContext`. The directory field is `final`. Nothing mutates in place.
 
-**Zip slip protection** — `unzip` validates every entry's canonical path before writing, blocking path traversal attacks like `../../etc/cron.d/evil`.
+**Myers O(ND) diff** — the `DiffCommand` implements the standard LCS-based algorithm. Inserting a line in one file correctly marks only that insertion — not every subsequent line as changed.
 
-**Registry-driven help** — `help` output is generated at runtime from the registry. Adding a command and implementing `usage()` is sufficient — the help list never drifts.
+**Streaming I/O** — `cat`, `grep`, `wc`, `head` all use `BufferedReader`. `tail` uses a ring buffer: O(N) memory for any file size where N is the requested line count.
+
+**Zip slip prevention** — `unzip` compares canonical paths before writing any entry. The check includes a `File.separator` suffix to prevent prefix-match bypass.
 
 ---
 
@@ -167,31 +202,36 @@ Each command group is a `final` class with a `private` constructor — used pure
 mvn test
 ```
 
-27 unit tests covering:
+42 tests covering:
 
-- Tokenizer quote handling (double and single quotes)
-- `cd` directory resolution and error on missing path
-- `mkdir -p` nested directory creation
-- `echo` file redirect and append
-- `grep` regex matching, case-insensitive flag, and no-match exit code
-- `rm` recursive directory deletion and missing `-r` guard
-- `head` / `tail` streaming correctness
-- `uniq` adjacent-only deduplication (POSIX semantics)
-- `checksum` MD5 output
-- `history` immutability (unmodifiable list)
-- Zip slip path traversal blocking
+- `ExecutionResult` — all four factory methods, `succeeded()` contract
+- Tokenizer — double quotes, single quotes, mixed, unquoted
+- `ShellContext` — `withDirectory()` returns new instance, history immutability
+- Filesystem — `cd` exit codes and context propagation, `mkdir -p`, `rm` recursive, directory guard
+- `cp` / `mv` — file and directory copy, missing source failure
+- `echo` — redirect and append
+- `grep` — regex, `-i` flag, exit 1 on no match, invalid regex
+- `head` / `tail` — output correctness, ring buffer boundary, early stop, invalid count
+- `sort` — alphabetical, numeric `-n`, reverse `-r` with output assertions
+- `diff` — Myers insertion/deletion without offsetting subsequent lines, exit codes
+- `checksum` — MD5 known-value assertion
+- `uniq` — adjacent-only deduplication, `-c` run counts
+- Large file — 100k lines via `cat` without OOM
+- Zip slip — path traversal blocked
+- `&&` chaining — all-succeed executes all, first-fail short-circuits, quoted `&&` not split
+- Integration — full REPL loop via stdin, `&&` end-to-end
 
 ---
 
 ## Known Limitations
 
-**`ping`** — uses `InetAddress.isReachable()`, which on Linux without root falls back to TCP port 7 (echo), universally blocked. Reachable hosts may appear to time out. Workaround: `exec ping <host>` delegates to the OS binary.
+**`ping`** — `InetAddress.isReachable()` requires ICMP privilege on Linux. Without root it falls back to TCP/7, universally blocked. Workaround: `exec ping <host>`.
 
-**`diff`** — line-number alignment comparison, not LCS. Inserting a line in one file offsets all subsequent line comparisons. Accurate diff requires Myers' algorithm.
+**`clear`** — ANSI escape codes. Works on Linux, macOS, Windows Terminal. Fails on legacy `cmd.exe`.
 
-**`clear`** — ANSI escape codes. Works on Linux, macOS, and Windows Terminal. Does not work on legacy Windows `cmd.exe`.
+**`exec`** — no sandboxing. Runs as the current JVM user. Do not expose over a network.
 
-**`exec`** — no sandboxing. Runs arbitrary commands as the current JVM user. Intentional for local use; do not expose over a network interface.
+**No pipelines** — `ls | grep txt | wc -l` is not supported. Requires interface changes to `execute()` to accept explicit `InputStream`/`PrintStream` parameters.
 
 ---
 
@@ -202,6 +242,7 @@ jshell/
 ├── src/
 │   ├── main/java/com/devops/
 │   │   ├── App.java
+│   │   ├── ExecutionResult.java
 │   │   ├── ShellContext.java
 │   │   ├── Command.java
 │   │   ├── CommandRegistry.java
@@ -219,6 +260,8 @@ jshell/
 │   │   └── UtilityCommands.java
 │   └── test/java/com/devops/
 │       └── AppTest.java
+├── Dockerfile
+├── docker-compose.yml
 └── pom.xml
 ```
 
@@ -226,15 +269,17 @@ jshell/
 
 ## Contributing
 
-1. Each command belongs in its corresponding `*Commands.java` file as a `static final` inner class implementing `Command`.
-2. Register it in `App.registerCommands()`.
-3. Implement `name()` and `usage()` — the command will appear in `help` automatically.
-4. Add a test in `AppTest.java` using a `@TempDir`-isolated `ShellContext`.
+1. Add a `static final class` implementing `Command` in the appropriate `*Commands.java` group file.
+2. Add it to the `permits` list in `Command.java` — the compiler enforces this.
+3. Register it in `App.registerCommands()`.
+4. Implement `name()` and `usage()` — it appears in `help` automatically.
+5. Return `ExecutionResult.ok(context)` on success, `ExecutionResult.fail(context)` on error, `ExecutionResult.misuse(context)` on bad arguments.
+6. Add tests in `AppTest.java` using a `@TempDir`-isolated `ShellContext`.
 
 ---
 
 <div align="center">
 
-Built with Java 21 · No runtime dependencies · 27 tests passing
+Java 21 · Sealed interfaces · Myers diff · 42 tests passing · Docker ready
 
 </div>

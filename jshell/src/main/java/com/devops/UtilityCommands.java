@@ -19,7 +19,7 @@ public final class UtilityCommands {
     public static final class SortCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ExecutionResult execute(ShellContext context, String[] args) {
             boolean reverse = false;
             boolean numeric = false;
             int fileIdx = 1;
@@ -35,13 +35,13 @@ public final class UtilityCommands {
 
             if (fileIdx >= args.length) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return ExecutionResult.misuse(context);
             }
 
             File file = new File(context.currentDirectory(), args[fileIdx]);
             if (!file.exists()) {
                 System.err.println("sort: '" + args[fileIdx] + "': No such file");
-                return 1;
+                return ExecutionResult.fail(context);
             }
 
             try {
@@ -63,9 +63,9 @@ public final class UtilityCommands {
                 lines.forEach(System.out::println);
             } catch (IOException e) {
                 System.err.println("sort: " + e.getMessage());
-                return 1;
+                return ExecutionResult.fail(context);
             }
-            return 0;
+            return ExecutionResult.ok(context);
         }
 
         @Override public String name()  { return "sort"; }
@@ -75,23 +75,23 @@ public final class UtilityCommands {
     public static final class UniqCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ExecutionResult execute(ShellContext context, String[] args) {
             if (args.length < 2) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return ExecutionResult.misuse(context);
             }
 
             boolean count = args[1].equals("-c");
             if (count && args.length < 3) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return ExecutionResult.misuse(context);
             }
             String fileName = count ? args[2] : args[1];
 
             File file = new File(context.currentDirectory(), fileName);
             if (!file.exists()) {
                 System.err.println("uniq: '" + fileName + "': No such file");
-                return 1;
+                return ExecutionResult.fail(context);
             }
 
             try (BufferedReader reader = Files.newBufferedReader(file.toPath())) {
@@ -111,9 +111,9 @@ public final class UtilityCommands {
                 if (prev != null) printUniq(prev, run, count);
             } catch (IOException e) {
                 System.err.println("uniq: " + e.getMessage());
-                return 1;
+                return ExecutionResult.fail(context);
             }
-            return 0;
+            return ExecutionResult.ok(context);
         }
 
         private void printUniq(String line, int runCount, boolean showCount) {
@@ -128,10 +128,10 @@ public final class UtilityCommands {
     public static final class ChecksumCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ExecutionResult execute(ShellContext context, String[] args) {
             if (args.length < 2) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return ExecutionResult.misuse(context);
             }
 
             String algorithm = "SHA-256";
@@ -145,13 +145,13 @@ public final class UtilityCommands {
 
             if (fileIdx >= args.length) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return ExecutionResult.misuse(context);
             }
 
             File file = new File(context.currentDirectory(), args[fileIdx]);
             if (!file.exists()) {
                 System.err.println("checksum: '" + args[fileIdx] + "': No such file");
-                return 1;
+                return ExecutionResult.fail(context);
             }
 
             try {
@@ -169,12 +169,12 @@ public final class UtilityCommands {
                 System.out.printf("%s  %s  %s%n", algorithm, args[fileIdx], hex);
             } catch (NoSuchAlgorithmException e) {
                 System.err.println("checksum: unsupported algorithm '" + algorithm + "'");
-                return 1;
+                return ExecutionResult.fail(context);
             } catch (IOException e) {
                 System.err.println("checksum: " + e.getMessage());
-                return 1;
+                return ExecutionResult.fail(context);
             }
-            return 0;
+            return ExecutionResult.ok(context);
         }
 
         @Override public String name()  { return "checksum"; }
@@ -184,7 +184,7 @@ public final class UtilityCommands {
     public static final class DuCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ExecutionResult execute(ShellContext context, String[] args) {
             boolean human = false;
             String path = ".";
 
@@ -196,14 +196,14 @@ public final class UtilityCommands {
             File target = new File(context.currentDirectory(), path);
             if (!target.exists()) {
                 System.err.println("du: '" + path + "': No such file or directory");
-                return 1;
+                return ExecutionResult.fail(context);
             }
 
             long size = sizeOf(target);
             System.out.printf("%s\t%s%n",
                 human ? ByteFormatter.formatCompact(size) : String.valueOf(size / 1024),
                 path);
-            return 0;
+            return ExecutionResult.ok(context);
         }
 
         private long sizeOf(File file) {
@@ -222,22 +222,22 @@ public final class UtilityCommands {
     public static final class HeadCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ExecutionResult execute(ShellContext context, String[] args) {
             if (args.length < 2) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return ExecutionResult.misuse(context);
             }
 
             int lines = 10;
             int fileIdx = 1;
 
             if (args[1].equals("-n")) {
-                if (args.length < 4) { System.err.println("usage: " + usage()); return 1; }
+                if (args.length < 4) { System.err.println("usage: " + usage()); return ExecutionResult.ok(context); }
                 try {
                     lines = Integer.parseInt(args[2]);
                 } catch (NumberFormatException e) {
                     System.err.println("head: invalid line count '" + args[2] + "'");
-                    return 1;
+                    return ExecutionResult.fail(context);
                 }
                 fileIdx = 3;
             }
@@ -245,7 +245,7 @@ public final class UtilityCommands {
             File file = new File(context.currentDirectory(), args[fileIdx]);
             if (!file.exists()) {
                 System.err.println("head: '" + args[fileIdx] + "': No such file");
-                return 1;
+                return ExecutionResult.fail(context);
             }
 
             // Stream — stops reading after n lines; never loads whole file
@@ -258,9 +258,9 @@ public final class UtilityCommands {
                 }
             } catch (IOException e) {
                 System.err.println("head: " + e.getMessage());
-                return 1;
+                return ExecutionResult.fail(context);
             }
-            return 0;
+            return ExecutionResult.ok(context);
         }
 
         @Override public String name()  { return "head"; }
@@ -270,22 +270,22 @@ public final class UtilityCommands {
     public static final class TailCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ExecutionResult execute(ShellContext context, String[] args) {
             if (args.length < 2) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return ExecutionResult.misuse(context);
             }
 
             int lines = 10;
             int fileIdx = 1;
 
             if (args[1].equals("-n")) {
-                if (args.length < 4) { System.err.println("usage: " + usage()); return 1; }
+                if (args.length < 4) { System.err.println("usage: " + usage()); return ExecutionResult.ok(context); }
                 try {
                     lines = Integer.parseInt(args[2]);
                 } catch (NumberFormatException e) {
                     System.err.println("tail: invalid line count '" + args[2] + "'");
-                    return 1;
+                    return ExecutionResult.fail(context);
                 }
                 fileIdx = 3;
             }
@@ -293,7 +293,7 @@ public final class UtilityCommands {
             File file = new File(context.currentDirectory(), args[fileIdx]);
             if (!file.exists()) {
                 System.err.println("tail: '" + args[fileIdx] + "': No such file");
-                return 1;
+                return ExecutionResult.fail(context);
             }
 
             // Ring buffer — single pass, O(n) lines kept in memory at most
@@ -314,9 +314,9 @@ public final class UtilityCommands {
                 }
             } catch (IOException e) {
                 System.err.println("tail: " + e.getMessage());
-                return 1;
+                return ExecutionResult.fail(context);
             }
-            return 0;
+            return ExecutionResult.ok(context);
         }
 
         @Override public String name()  { return "tail"; }

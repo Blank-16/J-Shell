@@ -15,10 +15,10 @@ public final class SearchCommands {
     public static final class FindCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ExecutionResult execute(ShellContext context, String[] args) {
             if (args.length < 2) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return ExecutionResult.misuse(context);
             }
 
             // Argument parsing: find <pattern> [-r] OR find <dir> -name <pattern>
@@ -39,13 +39,13 @@ public final class SearchCommands {
 
             if (!startDir.isDirectory()) {
                 System.err.println("find: '" + startDir.getName() + "': No such directory");
-                return 1;
+                return ExecutionResult.fail(context);
             }
 
             var count = new AtomicInteger(0);
             findFiles(startDir, pattern, recursive, count);
             System.out.println(count.get() + " match(es) found.");
-            return 0;
+            return ExecutionResult.ok(context);
         }
 
         private void findFiles(File dir, String pattern, boolean recursive, AtomicInteger count) {
@@ -69,10 +69,10 @@ public final class SearchCommands {
     public static final class WcCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ExecutionResult execute(ShellContext context, String[] args) {
             if (args.length < 2) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return ExecutionResult.misuse(context);
             }
 
             boolean linesOnly = false;
@@ -86,14 +86,14 @@ public final class SearchCommands {
 
             if (fileArgIndex >= args.length) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return ExecutionResult.misuse(context);
             }
 
             String fileName = args[fileArgIndex];
             File file = new File(context.currentDirectory(), fileName);
             if (!file.exists()) {
                 System.err.println("wc: " + fileName + ": No such file");
-                return 1;
+                return ExecutionResult.fail(context);
             }
 
             long lines = 0, words = 0, chars = 0;
@@ -108,7 +108,7 @@ public final class SearchCommands {
                 }
             } catch (IOException e) {
                 System.err.println("wc: " + e.getMessage());
-                return 1;
+                return ExecutionResult.fail(context);
             }
 
             if (linesOnly)      System.out.printf("%7d %s%n", lines, fileName);
@@ -116,7 +116,7 @@ public final class SearchCommands {
             else if (charsOnly) System.out.printf("%7d %s%n", chars, fileName);
             else                System.out.printf("%7d %7d %7d %s%n", lines, words, chars, fileName);
 
-            return 0;
+            return ExecutionResult.ok(context);
         }
 
         @Override public String name()  { return "wc"; }
@@ -126,48 +126,115 @@ public final class SearchCommands {
     public static final class DiffCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ExecutionResult execute(ShellContext context, String[] args) {
             if (args.length < 3) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return ExecutionResult.misuse(context);
             }
 
             File file1 = new File(context.currentDirectory(), args[1]);
             File file2 = new File(context.currentDirectory(), args[2]);
 
-            if (!file1.exists()) { System.err.println("diff: '" + args[1] + "': No such file"); return 1; }
-            if (!file2.exists()) { System.err.println("diff: '" + args[2] + "': No such file"); return 1; }
+            if (!file1.exists()) { System.err.println("diff: '" + args[1] + "': No such file"); return ExecutionResult.fail(context); }
+            if (!file2.exists()) { System.err.println("diff: '" + args[2] + "': No such file"); return ExecutionResult.fail(context); }
 
             try {
-                List<String> lines1 = Files.readAllLines(file1.toPath());
-                List<String> lines2 = Files.readAllLines(file2.toPath());
+                List<String> a = Files.readAllLines(file1.toPath());
+                List<String> b = Files.readAllLines(file2.toPath());
+                List<String> editScript = myers(a, b);
 
-                // Myers-style output: mark each differing line position
-                boolean identical = true;
-                int max = Math.max(lines1.size(), lines2.size());
-                for (int i = 0; i < max; i++) {
-                    String l1 = i < lines1.size() ? lines1.get(i) : null;
-                    String l2 = i < lines2.size() ? lines2.get(i) : null;
-
-                    if (l1 == null) {
-                        System.out.printf("> %d: %s%n", i + 1, l2);
-                        identical = false;
-                    } else if (l2 == null) {
-                        System.out.printf("< %d: %s%n", i + 1, l1);
-                        identical = false;
-                    } else if (!l1.equals(l2)) {
-                        System.out.printf("< %d: %s%n", i + 1, l1);
-                        System.out.printf("> %d: %s%n", i + 1, l2);
-                        identical = false;
-                    }
+                if (editScript.isEmpty()) {
+                    System.out.println("Files are identical.");
+                    return ExecutionResult.ok(context);
+                } else {
+                    editScript.forEach(System.out::println);
+                    // exit 1 = files differ (POSIX diff convention)
+                    return ExecutionResult.of(context, 1);
                 }
-
-                if (identical) System.out.println("Files are identical.");
-                return identical ? 0 : 1;
             } catch (IOException e) {
                 System.err.println("diff: " + e.getMessage());
-                return 1;
+                return ExecutionResult.fail(context);
             }
+        }
+
+        /**
+         * Myers O(ND) diff algorithm.
+         * Produces a minimal edit script: lines prefixed with "-" are only in a,
+         * "+" only in b, " " are common. This correctly handles insertions and
+         * deletions — unlike line-number alignment which offsets on any insertion.
+         */
+        private List<String> myers(List<String> a, List<String> b) {
+            int n = a.size(), m = b.size();
+            int max = n + m;
+            if (max == 0) return List.of();
+
+            // v[k] = furthest x reached on diagonal k
+            // offset by max so negative diagonals index correctly
+            int[] v = new int[2 * max + 1];
+            // trace[d] = snapshot of v after d edits
+            List<int[]> trace = new ArrayList<>();
+
+            outer:
+            for (int d = 0; d <= max; d++) {
+                trace.add(v.clone());
+                for (int k = -d; k <= d; k += 2) {
+                    int idx = k + max;
+                    int x;
+                    if (k == -d || (k != d && v[idx - 1] < v[idx + 1])) {
+                        x = v[idx + 1]; // move down (insertion)
+                    } else {
+                        x = v[idx - 1] + 1; // move right (deletion)
+                    }
+                    int y = x - k;
+                    // extend snake along matching diagonal
+                    while (x < n && y < m && a.get(x).equals(b.get(y))) {
+                        x++; y++;
+                    }
+                    v[idx] = x;
+                    if (x >= n && y >= m) break outer;
+                }
+            }
+
+            return backtrack(a, b, trace, max);
+        }
+
+        private List<String> backtrack(List<String> a, List<String> b, List<int[]> trace, int max) {
+            List<String> script = new ArrayList<>();
+            int x = a.size(), y = b.size();
+
+            for (int d = trace.size() - 1; d >= 0; d--) {
+                int[] v = trace.get(d);
+                int k   = x - y;
+                int idx = k + max;
+
+                int prevK;
+                if (k == -d || (k != d && v[idx - 1] < v[idx + 1])) {
+                    prevK = k + 1; // came from insertion
+                } else {
+                    prevK = k - 1; // came from deletion
+                }
+
+                int prevX = v[prevK + max];
+                int prevY = prevX - prevK;
+
+                // walk back along snake (matching lines)
+                while (x > prevX && y > prevY) {
+                    script.add(0, "  " + a.get(x - 1));
+                    x--; y--;
+                }
+
+                if (d > 0) {
+                    if (x == prevX) {
+                        script.add(0, "+ " + b.get(y - 1)); // insertion
+                        y--;
+                    } else {
+                        script.add(0, "- " + a.get(x - 1)); // deletion
+                        x--;
+                    }
+                }
+            }
+            // filter out context lines (common lines) for concise output
+            return script.stream().filter(l -> !l.startsWith("  ")).toList();
         }
 
         @Override public String name()  { return "diff"; }

@@ -10,17 +10,17 @@ public final class FileSystemCommands {
     public static final class ListCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ShellContext execute(ShellContext context, String[] args) {
             File[] files = context.currentDirectory().listFiles();
             if (files == null) {
                 System.err.println("ls: cannot read directory");
-                return 1;
+                return context;
             }
             for (File file : files) {
                 String type = file.isDirectory() ? "DIR " : "FILE";
                 System.out.printf("[%s] %-10s %s%n", type, file.length() + "B", file.getName());
             }
-            return 0;
+            return context;
         }
 
         @Override public String name()  { return "ls"; }
@@ -30,9 +30,9 @@ public final class FileSystemCommands {
     public static final class PwdCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ShellContext execute(ShellContext context, String[] args) {
             System.out.println(context.currentDirectory().getAbsolutePath());
-            return 0;
+            return context;
         }
 
         @Override public String name()  { return "pwd"; }
@@ -42,7 +42,7 @@ public final class FileSystemCommands {
     public static final class CdCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ShellContext execute(ShellContext context, String[] args) {
             File target = switch (args.length) {
                 case 1  -> new File(System.getProperty("user.home"));
                 default -> resolveTarget(context.currentDirectory(), args[1]);
@@ -50,26 +50,30 @@ public final class FileSystemCommands {
 
             if (target == null || !target.exists() || !target.isDirectory()) {
                 System.err.println("cd: " + (args.length > 1 ? args[1] : "") + ": No such directory");
-                return 1;
+                return context;
             }
 
             try {
-                context.setCurrentDirectory(target.getCanonicalFile());
+                // withDirectory() returns a new context — no mutation
+                return context.withDirectory(target.getCanonicalFile());
             } catch (IOException e) {
                 System.err.println("cd: " + e.getMessage());
-                return 1;
+                return context;
             }
-            return 0;
         }
 
         private File resolveTarget(File current, String path) {
-            if (path.equals("~"))  return new File(System.getProperty("user.home"));
-            if (path.equals("..")) {
-                File parent = current.getParentFile();
-                return parent != null ? parent : current;
-            }
-            File f = new File(path);
-            return f.isAbsolute() ? f : new File(current, path);
+            return switch (path) {
+                case "~"  -> new File(System.getProperty("user.home"));
+                case ".." -> {
+                    File parent = current.getParentFile();
+                    yield parent != null ? parent : current;
+                }
+                default -> {
+                    File f = new File(path);
+                    yield f.isAbsolute() ? f : new File(current, path);
+                }
+            };
         }
 
         @Override public String name()  { return "cd"; }
@@ -79,23 +83,27 @@ public final class FileSystemCommands {
     public static final class MkdirCommand implements Command {
 
         @Override
-        public int execute(ShellContext context, String[] args) {
+        public ShellContext execute(ShellContext context, String[] args) {
             if (args.length < 2) {
                 System.err.println("usage: " + usage());
-                return 1;
+                return context;
             }
-            // Support -p flag (create parents)
-            boolean parents = args.length > 2 && args[1].equals("-p");
-            String dirName = parents ? args[2] : args[1];
-            File dir = new File(context.currentDirectory(), dirName);
+            boolean parents = args[1].equals("-p");
+            String dirName  = parents ? (args.length > 2 ? args[2] : null) : args[1];
 
+            if (dirName == null) {
+                System.err.println("usage: " + usage());
+                return context;
+            }
+
+            File dir = new File(context.currentDirectory(), dirName);
             boolean created = parents ? dir.mkdirs() : dir.mkdir();
             if (!created) {
                 System.err.println("mkdir: cannot create '" + dirName + "': already exists or permission denied");
-                return 1;
+                return context;
             }
             System.out.println("Directory created: " + dir.getName());
-            return 0;
+            return context;
         }
 
         @Override public String name()  { return "mkdir"; }
