@@ -1,129 +1,155 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-echo ===================================================
-echo     J-Shell Quickstart & Environment Setup
-echo ===================================================
+:: ENABLE ANSI COLORS
+for /F %%a in ('echo prompt $E ^| cmd') do set "ESC=%%a"
+set "GRN=%ESC%[92m"
+set "RED=%ESC%[91m"
+set "YEL=%ESC%[93m"
+set "CYN=%ESC%[96m"
+set "RST=%ESC%[0m"
+
+:: SET SCRIPT DIRECTORY & INITIALIZE
+cd /d "%~dp0"
+set RESTART_REQUIRED=0
+
+:: Prevent Docker from creating root-owned mount directories
+if not exist workspace mkdir workspace
+
+:menu
+cls
+echo %CYN%===================================================%RST%
+echo    J-Shell Quickstart ^& Environment Setup
+echo %CYN%===================================================%RST%
 echo.
-echo [1] Run inside Docker (Recommended for users)
-echo     - No need to install Java or Maven on your computer.
-echo     - Runs in an isolated, clean Linux container.
-echo.
-echo [2] Run locally on Windows (Recommended for developers)
-echo     - Requires Java 21 and Maven installed.
-echo     - Runs directly on your host OS.
+echo [%CYN%1%RST%] Run J-Shell (Docker - Standard Session)
+echo [%CYN%2%RST%] Run Tests (Docker - Maven Test Suite)
+echo [%CYN%3%RST%] Run Dev Mode (Docker - Live Rebuild from ./src)
+echo [%CYN%4%RST%] Run Locally (Native Windows - Requires Java/Maven)
 echo.
 
-set /p choice="Select an option (1 or 2): "
+set /p choice="Select an option (1-4): "
+if "%choice%"=="1" set "SVC=jshell" & goto docker_mode
+if "%choice%"=="2" set "SVC=jshell-test" & goto docker_mode
+if "%choice%"=="3" set "SVC=jshell-dev" & goto docker_mode
+if "%choice%"=="4" goto local_mode
+echo %RED%[ERROR] Invalid choice. Please select 1-4.%RST%
+timeout /t 2 >nul
+goto menu
 
-if "%choice%"=="1" goto docker_mode
-if "%choice%"=="2" goto local_mode
-echo Invalid choice. Exiting.
-goto :eof
+:: DOCKER COMPOSE EXECUTION
 
-:: MODE 1: DOCKER SETUP
 :docker_mode
 echo.
-echo [MODE] Switched to Docker Container Mode.
+echo %CYN%[MODE] Containerized Execution: %SVC%%RST%
 
-:: --- CHECK DOCKER ---
 docker --version >nul 2>&1
 if !errorlevel! neq 0 (
-    echo [MISSING] Docker not found.
-    set /p install_docker="Would you like to install Docker Desktop? (y/n): "
+    echo %RED%[MISSING] Docker not found.%RST%
+    set /p install_docker="Install Docker Desktop? (y/n): "
     if /i "!install_docker!"=="y" (
-        echo Installing Docker Desktop...
-        winget install -e --id Docker.DockerDesktop
-        echo [IMPORTANT] Docker installation requires a system restart.
-        echo Please restart your computer and run this script again.
+        echo %CYN%Installing Docker Desktop...%RST%
+        winget install -e --id Docker.DockerDesktop --accept-source-agreements --accept-package-agreements
+        echo %YEL%[IMPORTANT] Docker requires a system restart.%RST%
         pause
         exit /b
     ) else (
-        echo Cannot run in Docker mode without Docker installed. Exiting.
-        goto :eof
+        echo %RED%Cannot continue without Docker. Exiting.%RST%
+        exit /b
     )
-) else (
-    echo [OK] Docker is installed.
 )
 
-:: --- CHECK DAEMON ---
-echo Checking if Docker Engine is running...
 docker info >nul 2>&1
 if !errorlevel! neq 0 (
-    echo Docker Desktop is not running. Attempting to start...
+    echo %YEL%[INFO] Docker Desktop is not running. Starting...%RST%
     start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-    echo Waiting for Docker to start (this may take up to 60s)...
-    timeout /t 20 >nul
+
+    echo %CYN%Waiting for Docker engine to initialize...%RST%
+    set /a attempts=0
+    :docker_wait_loop
+    timeout /t 2 /nobreak >nul
+    docker info >nul 2>&1
+    if !errorlevel! equ 0 goto docker_ready
+    set /a attempts+=1
+    if !attempts! geq 30 (
+        echo %RED%[ERROR] Docker failed to start within 60 seconds. Please start it manually.%RST%
+        pause
+        exit /b
+    )
+    goto docker_wait_loop
 )
 
-:: --- BUILD AND RUN ---
-if not exist Dockerfile (
-    echo [ERROR] Dockerfile not found in current directory!
+:docker_ready
+if not exist docker-compose.yml (
+    echo %RED%[ERROR] docker-compose.yml not found in current directory!%RST%
     pause
     exit /b
 )
 
 echo.
-echo Building Docker Image...
-docker build -t jshell .
+echo %GRN%Starting %SVC% via Docker Compose...%RST%
+echo %CYN%---------------------------------------------------%RST%
+docker compose run --rm %SVC%
+goto end
 
-echo.
-echo Starting J-Shell Container...
-echo ---------------------------------------------------
-echo Note: You are now inside the Linux container.
-docker run -it --rm --name jshell-instance jshell
-goto :end
+:: NATIVE WINDOWS EXECUTION
 
-
-:: MODE 2: LOCAL SETUP
 :local_mode
 echo.
-echo [MODE] Switched to Local Windows Mode.
+echo %CYN%[MODE] Switched to Native Windows Mode.%RST%
 
-:: --- CHECK JAVA ---
 java -version >nul 2>&1
 if !errorlevel! neq 0 (
-    echo [MISSING] Java JDK not found.
-    set /p install_java="Would you like to install Java JDK 21? (y/n): "
+    echo %RED%[MISSING] Java JDK not found.%RST%
+    set /p install_java="Install Eclipse Temurin JDK 21? (y/n): "
     if /i "!install_java!"=="y" (
-        echo Installing Eclipse Temurin JDK 21...
-        winget install -e --id EclipseAdoptium.Temurin.21.JDK
-        echo [NOTE] You may need to restart your terminal to refresh PATH.
+        echo %CYN%Installing JDK 21...%RST%
+        winget install -e --id EclipseAdoptium.Temurin.21.JDK --accept-source-agreements --accept-package-agreements
+        set RESTART_REQUIRED=1
     )
 ) else (
-    echo [OK] Java is installed.
+    echo %GRN%[OK] Java is installed.%RST%
 )
 
-:: --- CHECK MAVEN ---
-:: FIX 1: Added 'call' here so control returns to this script
 call mvn -version >nul 2>&1
 if !errorlevel! neq 0 (
-    echo [MISSING] Maven not found.
-    set /p install_mvn="Would you like to install Apache Maven? (y/n): "
-    
-    :: FIX 2: Using !variables! for delayed expansion
+    echo %RED%[MISSING] Maven not found.%RST%
+    set /p install_mvn="Install Apache Maven? (y/n): "
     if /i "!install_mvn!"=="y" (
-        echo Installing Apache Maven...
-        winget install -e --id Apache.Maven
-        echo [NOTE] You may need to restart your terminal to refresh PATH.
+        echo %CYN%Installing Apache Maven...%RST%
+        winget install -e --id Apache.Maven --accept-source-agreements --accept-package-agreements
+        set RESTART_REQUIRED=1
     )
 ) else (
-    echo [OK] Maven is installed.
+    echo %GRN%[OK] Maven is installed.%RST%
 )
 
-:: --- BUILD AND RUN ---
+if !RESTART_REQUIRED! equ 1 (
+    echo.
+    echo %YEL%[ACTION REQUIRED] New dependencies were installed.%RST%
+    echo %YEL%You must close and reopen this terminal to load the new PATH variables.%RST%
+    pause
+    exit /b
+)
+
 echo.
-echo Building project locally...
-call cd jshell
+echo %CYN%Building project locally...%RST%
+if exist jshell\pom.xml cd jshell
+if not exist pom.xml (
+    echo %RED%[ERROR] pom.xml not found. Script must be in project root.%RST%
+    pause
+    exit /b
+)
+
 call mvn clean package -DskipTests
 
 echo.
-echo Starting J-Shell on Windows...
-echo ---------------------------------------------------
-java -jar target/j-shell-1.0.0.jar
-goto :end
+echo %GRN%Starting J-Shell...%RST%
+echo %CYN%---------------------------------------------------%RST%
+java -jar target/j-shell-*.jar
+goto end
 
 :end
 echo.
-echo Session finished.
+echo %GRN%Session finished.%RST%
 pause
